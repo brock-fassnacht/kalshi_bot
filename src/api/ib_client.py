@@ -627,8 +627,8 @@ class IBClient:
                 continue
 
             for chain in chains:
-                # Find the nearest option expiry >= min_option_expiry
-                valid_expiries = sorted([e for e in chain.expirations if e >= min_option_expiry])
+                # Find the nearest option expiry > min_option_expiry (must expire AFTER Kalshi)
+                valid_expiries = sorted([e for e in chain.expirations if e > min_option_expiry])
                 if valid_expiries:
                     target_futures = fut
                     target_option_expiry = valid_expiries[0]  # Nearest valid expiry

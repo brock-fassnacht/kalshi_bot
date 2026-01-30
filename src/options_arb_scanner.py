@@ -15,7 +15,7 @@ Run with: python run.py options-scan
 """
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from rich.console import Console
@@ -266,6 +266,11 @@ async def run_options_arb_scan_fast(
 
                 # Skip short-duration contracts (hourly, daily) - only want weekly+
                 if not m.is_long_duration(min_days=7.0):
+                    skipped_short_duration += 1
+                    continue
+
+                # Skip contracts expiring within 2 days - can't get option hedges
+                if m.expiration_time and m.expiration_time < datetime.utcnow() + timedelta(days=2):
                     skipped_short_duration += 1
                     continue
 
