@@ -70,6 +70,7 @@ def display_hedged_opportunities(opportunities: list[HedgedArbitrageOpportunity]
         )
         table.add_row("Options Contracts", str(opp.options_contracts))
         table.add_row("Net Debit", f"${opp.spread.net_debit:,.2f}")
+        table.add_row("Pricing", f"{opp.spread.pricing_method}" + (" [dim](conservative)[/dim]" if opp.spread.pricing_method == "bid/ask" else " [dim](mid fill)[/dim]"))
 
         # P&L Analysis
         table.add_row("", "")

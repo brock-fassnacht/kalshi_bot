@@ -53,6 +53,27 @@ class OptionQuote:
             return (self.bid + self.ask) / 2
         return self.last
 
+    @property
+    def spread_width(self) -> Optional[float]:
+        """Bid-ask spread in dollars."""
+        if self.bid is not None and self.ask is not None:
+            return self.ask - self.bid
+        return None
+
+    @property
+    def spread_percent(self) -> Optional[float]:
+        """Bid-ask spread as percentage of mid price."""
+        if self.mid and self.spread_width is not None:
+            return (self.spread_width / self.mid) * 100
+        return None
+
+    def is_tight_spread(self, max_percent: float = 10.0) -> bool:
+        """Check if spread is tight enough to use bid/ask pricing."""
+        pct = self.spread_percent
+        if pct is None:
+            return False
+        return pct <= max_percent
+
 
 @dataclass
 class OptionsChain:
@@ -120,6 +141,7 @@ class SpreadPosition:
     expiry: str
     is_call_spread: bool = True  # True for call spread, False for put spread
     contracts: int = 1  # Number of spread contracts
+    pricing_method: str = "bid/ask"  # "bid/ask" for tight spreads, "mid" for wide spreads
 
     @property
     def net_debit(self) -> float:
@@ -189,12 +211,15 @@ class OptionsHedgeArbitrageAnalyzer:
     - Contract multiplier configurable (BFF=0.01, MBT=0.1 BTC per contract)
     """
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, tight_spread_threshold: float = 10.0):
         self.settings = settings
         self.min_roi = settings.roi_threshold
         # Get multiplier from settings (BFF=0.01, MBT=0.1)
         self.btc_multiplier = settings.btc_multiplier
+        # Spread threshold: if bid-ask spread > this % of mid, use mid pricing
+        self.tight_spread_threshold = tight_spread_threshold
         logger.info(f"Using {settings.btc_futures_symbol} with multiplier {self.btc_multiplier} BTC/contract")
+        logger.info(f"Tight spread threshold: {tight_spread_threshold}% (use mid if wider)")
 
     def find_hedged_arbitrage(
         self,
@@ -351,8 +376,33 @@ class OptionsHedgeArbitrageAnalyzer:
                     logger.debug(f"Skipping mismatched expiries: {long_call.expiry} vs {short_call.expiry}")
                     continue
 
+                # Determine pricing method based on bid-ask spread width
+                # If spreads are tight, use conservative bid/ask pricing
+                # If spreads are wide, use mid pricing (more realistic fill assumption)
+                long_tight = long_call.is_tight_spread(self.tight_spread_threshold)
+                short_tight = short_call.is_tight_spread(self.tight_spread_threshold)
+
+                if long_tight and short_tight:
+                    # Both spreads tight - use conservative bid/ask pricing
+                    long_price = long_call.ask
+                    short_price = short_call.bid
+                    pricing_method = "bid/ask"
+                else:
+                    # Wide spread(s) - use mid pricing
+                    long_price = long_call.mid if long_call.mid else long_call.ask
+                    short_price = short_call.mid if short_call.mid else short_call.bid
+                    pricing_method = "mid"
+
+                long_spread_pct = long_call.spread_percent or 0
+                short_spread_pct = short_call.spread_percent or 0
+                logger.debug(
+                    f"Pricing method: {pricing_method} | "
+                    f"Long ${lower_strike}: spread={long_spread_pct:.1f}% | "
+                    f"Short ${upper_strike}: spread={short_spread_pct:.1f}%"
+                )
+
                 # Calculate spread debit and max profit
-                spread_debit = long_call.ask - short_call.bid
+                spread_debit = long_price - short_price
                 spread_width = upper_strike - lower_strike
                 spread_max_value = spread_width * self.btc_multiplier
                 spread_max_profit = spread_max_value - spread_debit
@@ -378,15 +428,16 @@ class OptionsHedgeArbitrageAnalyzer:
                     f"ratio={spread_ratio:.3f}"
                 )
 
-                # Calculate spread position
+                # Calculate spread position using determined prices
                 spread = SpreadPosition(
                     long_strike=lower_strike,
                     short_strike=upper_strike,
-                    long_premium=long_call.ask,  # We pay the ask
-                    short_premium=short_call.bid,  # We receive the bid
+                    long_premium=long_price,  # Price we pay (ask or mid)
+                    short_premium=short_price,  # Price we receive (bid or mid)
                     expiry=long_call.expiry,
                     is_call_spread=True,
                     contracts=1,  # Will be sized later
+                    pricing_method=pricing_method,
                 )
 
                 # Calculate combined P&L at various BTC prices
