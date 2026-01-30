@@ -439,7 +439,7 @@ async def run_options_arb_scan_fast(
             console.print("\n[cyan]Filtering markets...[/cyan]")
             candidate_markets = []
             skipped_count = 0
-            skip_reasons = {"no_expiry": 0, "too_soon": 0, "short_duration": 0, "no_price": 0, "price_too_high": 0, "wrong_dir": 0}
+            skip_reasons = {"no_expiry": 0, "too_soon": 0, "short_duration": 0, "no_price": 0, "price_out_of_range": 0, "wrong_dir": 0}
 
             for m in kalshi_markets:
                 parsed = parse_kalshi_market(m)
@@ -477,9 +477,9 @@ async def run_options_arb_scan_fast(
                     skip_reasons["no_price"] += 1
                     continue
 
-                # NO price must be under 97c
-                if parsed['no_price'] >= 97:
-                    skip_reasons["price_too_high"] += 1
+                # NO price must be between 5c and 95c
+                if parsed['no_price'] < 5 or parsed['no_price'] > 95:
+                    skip_reasons["price_out_of_range"] += 1
                     continue
 
                 parsed['market'] = m
@@ -490,7 +490,7 @@ async def run_options_arb_scan_fast(
             console.print(f"\n[bold]Filter results:[/bold]")
             console.print(f"  Passed filters: {len(candidate_markets)}")
             console.print(f"  Skipped - expires too soon (<3d): {skip_reasons['too_soon']}")
-            console.print(f"  Skipped - NO price >= 97c: {skip_reasons['price_too_high']}")
+            console.print(f"  Skipped - NO price outside 5-95c: {skip_reasons['price_out_of_range']}")
             console.print(f"  Skipped - wrong direction (not 'above'): {skip_reasons['wrong_dir']}")
             console.print(f"  Skipped - no NO price: {skip_reasons['no_price']}")
             console.print(f"  Skipped - short duration: {skip_reasons['short_duration']}")
