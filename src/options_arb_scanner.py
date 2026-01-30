@@ -256,11 +256,17 @@ async def run_options_arb_scan_fast(
             # Filter for markets with good NO pricing (potential arb targets)
             # We want markets where NO is cheap (high potential profit)
             candidate_markets = []
+            skipped_short_duration = 0
             for m in kalshi_markets:
                 parsed = parse_kalshi_market(m)
 
                 # Skip if can't parse
                 if not parsed['strike'] or not parsed['expiry']:
+                    continue
+
+                # Skip short-duration contracts (hourly, daily) - only want weekly+
+                if not m.is_long_duration(min_days=7.0):
+                    skipped_short_duration += 1
                     continue
 
                 # We want "above" markets with valid NO pricing
@@ -272,7 +278,7 @@ async def run_options_arb_scan_fast(
             # Sort by NO price (cheapest first = highest potential ROI)
             candidate_markets.sort(key=lambda x: x['no_price'])
 
-            console.print(f"Found {len(candidate_markets)} candidate markets")
+            console.print(f"Found {len(candidate_markets)} candidate markets (skipped {skipped_short_duration} short-duration contracts)")
 
             if not candidate_markets:
                 console.print("[yellow]No suitable markets found[/yellow]")

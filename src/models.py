@@ -39,6 +39,7 @@ class Market(BaseModel):
 
     # Metadata
     category: Optional[str] = None
+    open_time: Optional[datetime] = None
     close_time: Optional[datetime] = None
     expiration_time: Optional[datetime] = None
 
@@ -64,6 +65,24 @@ class Market(BaseModel):
         if self.yes_bid is not None and self.yes_ask is not None:
             return self.yes_ask - self.yes_bid
         return None
+
+    @property
+    def duration_days(self) -> Optional[float]:
+        """Calculate total contract duration in days (from open to close/expiry)."""
+        if self.open_time is None:
+            return None
+        end_time = self.close_time or self.expiration_time
+        if end_time is None:
+            return None
+        delta = end_time - self.open_time
+        return delta.total_seconds() / 86400  # Convert to days
+
+    def is_long_duration(self, min_days: float = 7.0) -> bool:
+        """Check if contract duration is at least min_days (default 7 days)."""
+        duration = self.duration_days
+        if duration is None:
+            return False
+        return duration >= min_days
 
 
 class Event(BaseModel):

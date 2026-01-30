@@ -341,6 +341,7 @@ class KalshiClient:
                 volume=data.get("volume", 0),
                 open_interest=data.get("open_interest", 0),
                 category=data.get("category"),
+                open_time=self._parse_datetime(data.get("open_time")),
                 close_time=self._parse_datetime(data.get("close_time")),
                 expiration_time=self._parse_datetime(data.get("expiration_time")),
             )
