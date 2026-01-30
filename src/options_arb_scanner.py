@@ -136,30 +136,52 @@ def display_options_chain_summary(chain_data: dict) -> None:
 
 
 def convert_chain_data_to_options_chain(chain_data: dict) -> OptionsChain:
-    """Convert IB chain data dict to OptionsChain object."""
+    """Convert IB chain data dict to OptionsChain object.
+
+    For delayed data, uses 'last' price as fallback for bid/ask.
+    """
     calls = []
     puts = []
 
     for c in chain_data['calls']:
+        # Use last price as fallback for bid/ask (common with delayed data)
+        bid = c['bid']
+        ask = c['ask']
+        last = c['last']
+
+        # If no bid/ask but have last, use last as estimate for both
+        if bid is None and ask is None and last is not None:
+            bid = last
+            ask = last
+
         calls.append(OptionQuote(
             strike=c['strike'],
             expiry=c['expiry'],
             right='C',
-            bid=c['bid'],
-            ask=c['ask'],
-            last=c['last'],
+            bid=bid,
+            ask=ask,
+            last=last,
             volume=c.get('volume', 0),
             open_interest=c.get('open_interest', 0),
         ))
 
     for p in chain_data['puts']:
+        # Use last price as fallback for bid/ask (common with delayed data)
+        bid = p['bid']
+        ask = p['ask']
+        last = p['last']
+
+        if bid is None and ask is None and last is not None:
+            bid = last
+            ask = last
+
         puts.append(OptionQuote(
             strike=p['strike'],
             expiry=p['expiry'],
             right='P',
-            bid=p['bid'],
-            ask=p['ask'],
-            last=p['last'],
+            bid=bid,
+            ask=ask,
+            last=last,
             volume=p.get('volume', 0),
             open_interest=p.get('open_interest', 0),
         ))
@@ -320,12 +342,25 @@ async def run_options_arb_scan_fast(
                         console.print("  [yellow]No options data available[/yellow]")
                         continue
 
-                    calls_with_prices = [c for c in chain_data['calls'] if c.get('bid') or c.get('ask')]
-                    console.print(f"  Got {len(chain_data['calls'])} strikes, {len(calls_with_prices)} with prices")
+                    # Count options with different price types
+                    calls_with_bidask = [c for c in chain_data['calls'] if c.get('bid') or c.get('ask')]
+                    calls_with_last = [c for c in chain_data['calls'] if c.get('last')]
+                    calls_with_any = [c for c in chain_data['calls'] if c.get('bid') or c.get('ask') or c.get('last')]
 
-                    if not calls_with_prices:
-                        console.print("  [yellow]No options with bid/ask prices[/yellow]")
+                    console.print(f"  Got {len(chain_data['calls'])} strikes: {len(calls_with_bidask)} with bid/ask, {len(calls_with_last)} with last price")
+
+                    # Show sample of data for debugging
+                    if chain_data['calls'][:3]:
+                        console.print("  [dim]Sample data:[/dim]")
+                        for c in chain_data['calls'][:3]:
+                            console.print(f"    ${c['strike']:,.0f}: bid={c.get('bid')}, ask={c.get('ask')}, last={c.get('last')}")
+
+                    if not calls_with_any:
+                        console.print("  [yellow]No options with any price data[/yellow]")
                         continue
+
+                    # For delayed data, use 'last' price if bid/ask not available
+                    # We'll handle this in the OptionsChain conversion
 
                     # Convert to OptionsChain format
                     options_chain = convert_chain_data_to_options_chain(chain_data)
