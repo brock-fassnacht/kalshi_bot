@@ -60,6 +60,8 @@ class ScannerDisplay:
         self.opportunities: list[HedgedArbitrageOpportunity] = []
         self.last_action = ""
         self.errors: list[str] = []
+        self.candidate_markets: list[dict] = []  # List of candidate markets to scan
+        self.market_results: dict[int, str] = {}  # idx -> result status
 
     def elapsed_time(self) -> str:
         elapsed = int(time.time() - self.start_time)
@@ -94,6 +96,41 @@ class ScannerDisplay:
                 f"IBIT: ${self.ibit_price:.2f} | BTC: ${self.btc_price:,.0f} | Ratio: {self.btc_ibit_ratio:.1f}"
             )
 
+        # Candidate markets table
+        markets_table = None
+        if self.candidate_markets:
+            markets_table = Table(show_header=True, header_style="bold dim", box=None, padding=(0, 1))
+            markets_table.add_column("#", style="dim", width=3)
+            markets_table.add_column("Strike", justify="right")
+            markets_table.add_column("NO Price", justify="right")
+            markets_table.add_column("Expiry", justify="right")
+            markets_table.add_column("Status", justify="left")
+
+            for idx, m in enumerate(self.candidate_markets[:self.progress_total], 1):
+                strike = f"${m['strike']:,.0f}"
+                no_price = f"{m['no_price']}¢"
+                expiry = m['expiry']
+
+                # Determine status from results or progress
+                if idx in self.market_results:
+                    result = self.market_results[idx]
+                    if result == "opportunity":
+                        status = "[bold green]✓ OPPORTUNITY[/bold green]"
+                    elif result == "no_arb":
+                        status = "[dim]✗ No arb[/dim]"
+                    elif result == "no_data":
+                        status = "[yellow]⚠ No data[/yellow]"
+                    elif result == "error":
+                        status = "[red]✗ Error[/red]"
+                    else:
+                        status = "[dim]✓ Done[/dim]"
+                elif idx == self.progress_current:
+                    status = "[yellow]► Scanning...[/yellow]"
+                else:
+                    status = "[dim]Pending[/dim]"
+
+                markets_table.add_row(str(idx), strike, no_price, expiry, status)
+
         # Progress bar
         progress_text = Text()
         if self.progress_total > 0:
@@ -123,15 +160,24 @@ class ScannerDisplay:
                 error_text.append(f"⚠ {err}\n", style="red dim")
 
         # Combine all
-        content = Group(
+        elements = [
             header,
             status_text,
             market_info,
+        ]
+
+        if markets_table:
+            elements.append(Text("\n"))
+            elements.append(markets_table)
+
+        elements.extend([
             progress_text,
             action_text,
             opp_text,
             error_text,
-        )
+        ])
+
+        content = Group(*elements)
 
         return Panel(content, border_style="blue", padding=(1, 2))
 
@@ -409,6 +455,7 @@ async def run_options_arb_scan_fast(
 
                 candidate_markets.sort(key=lambda x: x['no_price'])
                 display.kalshi_filtered = len(candidate_markets)
+                display.candidate_markets = candidate_markets  # Store for display
                 display.last_action = f"Filtered to {len(candidate_markets)} candidates (skipped {skipped_short_duration} short-duration)"
                 live.update(display.render())
 
@@ -445,6 +492,7 @@ async def run_options_arb_scan_fast(
 
                         if not chain_data['calls']:
                             display.last_action = f"No IBIT options for ${candidate['strike']:,.0f}"
+                            display.market_results[i + 1] = "no_data"
                             live.update(display.render())
                             continue
 
@@ -453,6 +501,7 @@ async def run_options_arb_scan_fast(
                         live.update(display.render())
 
                         if not calls_with_any:
+                            display.market_results[i + 1] = "no_data"
                             continue
 
                         # Convert and analyze
@@ -471,8 +520,10 @@ async def run_options_arb_scan_fast(
                             display.opportunities_found = len(all_opportunities)
                             display.opportunities = all_opportunities
                             display.last_action = f"Found opportunity! ROI: {opportunities[0].roi*100:.1f}%"
+                            display.market_results[i + 1] = "opportunity"
                         else:
                             display.last_action = f"No arb at ${candidate['strike']:,.0f}"
+                            display.market_results[i + 1] = "no_arb"
 
                         live.update(display.render())
 
@@ -480,6 +531,7 @@ async def run_options_arb_scan_fast(
                         error_msg = str(e)[:50]
                         display.errors.append(f"{candidate['ticker']}: {error_msg}")
                         display.last_action = f"Error: {error_msg}"
+                        display.market_results[i + 1] = "error"
                         logger.exception(f"Error scanning market {candidate['ticker']}")
                         live.update(display.render())
                         continue
