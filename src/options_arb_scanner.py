@@ -432,31 +432,37 @@ async def run_options_arb_scan_fast(
 
                 # Filter markets
                 candidate_markets = []
-                skipped_short_duration = 0
+                skipped_count = 0
                 for m in kalshi_markets:
                     parsed = parse_kalshi_market(m)
 
                     if not parsed['strike'] or not parsed['expiry']:
                         continue
 
-                    if not m.is_long_duration(min_days=7.0):
-                        skipped_short_duration += 1
+                    # Must be at least 28 days total duration
+                    if not m.is_long_duration(min_days=28.0):
+                        skipped_count += 1
                         continue
 
+                    # Must have at least 14 days until expiry
                     if m.expiration_time:
                         exp_time = m.expiration_time.replace(tzinfo=None) if m.expiration_time.tzinfo else m.expiration_time
-                        if exp_time < datetime.utcnow() + timedelta(days=2):
-                            skipped_short_duration += 1
+                        if exp_time < datetime.utcnow() + timedelta(days=14):
+                            skipped_count += 1
                             continue
 
+                    # Must be "above" market with valid NO price under 97c
                     if parsed['direction'] == 'above' and parsed['no_price']:
+                        if parsed['no_price'] >= 97:
+                            skipped_count += 1
+                            continue
                         parsed['market'] = m
                         candidate_markets.append(parsed)
 
                 candidate_markets.sort(key=lambda x: x['no_price'])
                 display.kalshi_filtered = len(candidate_markets)
                 display.candidate_markets = candidate_markets  # Store for display
-                display.last_action = f"Filtered to {len(candidate_markets)} candidates (skipped {skipped_short_duration} short-duration)"
+                display.last_action = f"Filtered to {len(candidate_markets)} candidates (skipped {skipped_count}: <28d duration, <14d to expiry, or NO>=97c)"
                 live.update(display.render())
 
                 if not candidate_markets:
