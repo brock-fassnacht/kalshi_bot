@@ -103,13 +103,13 @@ class ScannerDisplay:
             markets_table.add_column("#", style="dim", width=3)
             markets_table.add_column("Strike", justify="right")
             markets_table.add_column("NO Price", justify="right")
-            markets_table.add_column("Expiry", justify="right")
+            markets_table.add_column("Days Left", justify="right")
             markets_table.add_column("Status", justify="left")
 
             for idx, m in enumerate(self.candidate_markets[:self.progress_total], 1):
                 strike = f"${m['strike']:,.0f}"
                 no_price = f"{m['no_price']}¢"
-                expiry = m['expiry']
+                days_left = f"{m.get('days_to_expiry', '?')}d"
 
                 # Determine status from results or progress
                 if idx in self.market_results:
@@ -129,7 +129,7 @@ class ScannerDisplay:
                 else:
                     status = "[dim]Pending[/dim]"
 
-                markets_table.add_row(str(idx), strike, no_price, expiry, status)
+                markets_table.add_row(str(idx), strike, no_price, days_left, status)
 
         # Progress bar
         progress_text = Text()
@@ -439,15 +439,23 @@ async def run_options_arb_scan_fast(
                     if not parsed['strike'] or not parsed['expiry']:
                         continue
 
-                    # Must be at least 28 days total duration
-                    if not m.is_long_duration(min_days=28.0):
+                    # Must have at least 14 days until expiry
+                    if not m.expiration_time:
                         skipped_count += 1
                         continue
 
-                    # Must have at least 14 days until expiry
-                    if m.expiration_time:
-                        exp_time = m.expiration_time.replace(tzinfo=None) if m.expiration_time.tzinfo else m.expiration_time
-                        if exp_time < datetime.utcnow() + timedelta(days=14):
+                    exp_time = m.expiration_time.replace(tzinfo=None) if m.expiration_time.tzinfo else m.expiration_time
+                    days_to_expiry = (exp_time - datetime.utcnow()).days
+
+                    if days_to_expiry < 14:
+                        skipped_count += 1
+                        continue
+
+                    # If we have open_time, check duration is at least 28 days
+                    # If no open_time, skip this check (can't determine duration)
+                    if m.open_time:
+                        duration = m.duration_days
+                        if duration is not None and duration < 28:
                             skipped_count += 1
                             continue
 
@@ -457,12 +465,13 @@ async def run_options_arb_scan_fast(
                             skipped_count += 1
                             continue
                         parsed['market'] = m
+                        parsed['days_to_expiry'] = days_to_expiry  # Store for display
                         candidate_markets.append(parsed)
 
                 candidate_markets.sort(key=lambda x: x['no_price'])
                 display.kalshi_filtered = len(candidate_markets)
                 display.candidate_markets = candidate_markets  # Store for display
-                display.last_action = f"Filtered to {len(candidate_markets)} candidates (skipped {skipped_count}: <28d duration, <14d to expiry, or NO>=97c)"
+                display.last_action = f"Filtered to {len(candidate_markets)} candidates (skipped {skipped_count} that had <14d to expiry or NO>=97c)"
                 live.update(display.render())
 
                 if not candidate_markets:
