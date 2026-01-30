@@ -270,9 +270,12 @@ async def run_options_arb_scan_fast(
                     continue
 
                 # Skip contracts expiring within 2 days - can't get option hedges
-                if m.expiration_time and m.expiration_time < datetime.utcnow() + timedelta(days=2):
-                    skipped_short_duration += 1
-                    continue
+                if m.expiration_time:
+                    # Handle both timezone-aware and naive datetimes
+                    exp_time = m.expiration_time.replace(tzinfo=None) if m.expiration_time.tzinfo else m.expiration_time
+                    if exp_time < datetime.utcnow() + timedelta(days=2):
+                        skipped_short_duration += 1
+                        continue
 
                 # We want "above" markets with valid NO pricing
                 # (betting BTC won't go ABOVE the strike)
