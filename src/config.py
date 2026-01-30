@@ -25,10 +25,13 @@ class Settings(BaseSettings):
     ib_client_id: int = 1
     ib_timeout: int = 30
 
-    # Bitcoin Futures Symbol
+    # Bitcoin Futures Symbol (for price reference)
     # MBT = Micro Bitcoin (0.1 BTC per contract)
     # BFF = Bitcoin Friday Futures (0.01 BTC per contract) - 10x smaller
     btc_futures_symbol: str = "BFF"  # Default to smaller BFF contracts
+
+    # Options source: "IBIT" for ETF options, "BFF" for futures options
+    options_source: str = "IBIT"
 
     # Contract multipliers (BTC per contract)
     BTC_MULTIPLIERS: dict = {
@@ -36,6 +39,10 @@ class Settings(BaseSettings):
         "BFF": 0.02,   # Bitcoin Friday Futures - 0.02 BTC (1/5 of MBT)
         "BTC": 5.0,    # Full Bitcoin Futures - 5 BTC
     }
+
+    # IBIT options: standard 100 shares per contract
+    # BTC equivalent depends on current BTC/IBIT ratio (calculated dynamically)
+    IBIT_SHARES_PER_CONTRACT: int = 100
 
     @property
     def btc_multiplier(self) -> float:

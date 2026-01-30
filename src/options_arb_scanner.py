@@ -135,13 +135,17 @@ def display_options_chain_summary(chain_data: dict) -> None:
             console.print(f"  ${call['strike']:,.0f} {call['expiry']}: bid={bid}, ask={ask}")
 
 
-def convert_chain_data_to_options_chain(chain_data: dict) -> OptionsChain:
+def convert_chain_data_to_options_chain(chain_data: dict, use_btc_equivalent: bool = True) -> OptionsChain:
     """Convert IB chain data dict to OptionsChain object.
 
     For delayed data, uses 'last' price as fallback for bid/ask.
+    For IBIT options, converts strikes to BTC equivalent if use_btc_equivalent=True.
     """
     calls = []
     puts = []
+
+    # Get BTC/IBIT ratio for strike conversion (if IBIT data)
+    btc_ibit_ratio = chain_data.get('btc_ibit_ratio', 1.0)
 
     for c in chain_data['calls']:
         # Use last price as fallback for bid/ask (common with delayed data)
@@ -154,8 +158,11 @@ def convert_chain_data_to_options_chain(chain_data: dict) -> OptionsChain:
             bid = last
             ask = last
 
+        # Use BTC equivalent strike for IBIT options
+        strike = c.get('btc_equivalent_strike', c['strike']) if use_btc_equivalent else c['strike']
+
         calls.append(OptionQuote(
-            strike=c['strike'],
+            strike=strike,
             expiry=c['expiry'],
             right='C',
             bid=bid,
@@ -175,8 +182,11 @@ def convert_chain_data_to_options_chain(chain_data: dict) -> OptionsChain:
             bid = last
             ask = last
 
+        # Use BTC equivalent strike for IBIT options
+        strike = p.get('btc_equivalent_strike', p['strike']) if use_btc_equivalent else p['strike']
+
         puts.append(OptionQuote(
-            strike=p['strike'],
+            strike=strike,
             expiry=p['expiry'],
             right='P',
             bid=bid,
@@ -327,20 +337,24 @@ async def run_options_arb_scan_fast(
                 console.print(f"\n[bold]Market {i+1}/{min(max_markets, len(candidate_markets))}:[/bold] ${candidate['strike']:,.0f}")
 
                 try:
-                    # Fetch targeted options for this strike
-                    console.print(f"  Fetching options around ${candidate['strike']:,.0f}, expiry >= {candidate['expiry']}...")
+                    # Fetch IBIT options for this strike
+                    console.print(f"  Fetching IBIT options around ${candidate['strike']:,.0f}, expiry > {candidate['expiry']}...")
 
-                    chain_data = await ib.get_targeted_options(
-                        target_strike=candidate['strike'],
+                    chain_data = await ib.get_ibit_options(
+                        target_btc_strike=candidate['strike'],
                         min_option_expiry=candidate['expiry'],
                         num_strikes=20,
-                        strike_interval=500,  # $500 intervals (BFF option spacing)
                         wait_seconds=2.0,
                     )
 
                     if not chain_data['calls']:
-                        console.print("  [yellow]No options data available[/yellow]")
+                        console.print("  [yellow]No IBIT options data available[/yellow]")
                         continue
+
+                    # Show IBIT/BTC ratio
+                    ratio = chain_data.get('btc_ibit_ratio', 0)
+                    ibit_price = chain_data.get('ibit_price', 0)
+                    console.print(f"  IBIT: ${ibit_price:.2f}, BTC/IBIT ratio: {ratio:.1f}")
 
                     # Count options with different price types
                     calls_with_bidask = [c for c in chain_data['calls'] if c.get('bid') or c.get('ask')]
@@ -349,11 +363,12 @@ async def run_options_arb_scan_fast(
 
                     console.print(f"  Got {len(chain_data['calls'])} strikes: {len(calls_with_bidask)} with bid/ask, {len(calls_with_last)} with last price")
 
-                    # Show sample of data for debugging
+                    # Show sample of data for debugging (with BTC equivalent)
                     if chain_data['calls'][:3]:
-                        console.print("  [dim]Sample data:[/dim]")
+                        console.print("  [dim]Sample data (IBIT strike -> BTC equiv):[/dim]")
                         for c in chain_data['calls'][:3]:
-                            console.print(f"    ${c['strike']:,.0f}: bid={c.get('bid')}, ask={c.get('ask')}, last={c.get('last')}")
+                            btc_equiv = c.get('btc_equivalent_strike', c['strike'] * ratio)
+                            console.print(f"    ${c['strike']:.2f} (~${btc_equiv:,.0f} BTC): bid={c.get('bid')}, ask={c.get('ask')}, last={c.get('last')}")
 
                     if not calls_with_any:
                         console.print("  [yellow]No options with any price data[/yellow]")
@@ -362,8 +377,12 @@ async def run_options_arb_scan_fast(
                     # For delayed data, use 'last' price if bid/ask not available
                     # We'll handle this in the OptionsChain conversion
 
-                    # Convert to OptionsChain format
+                    # Convert to OptionsChain format (uses BTC equivalent strikes for IBIT)
                     options_chain = convert_chain_data_to_options_chain(chain_data)
+
+                    # Set IBIT multiplier based on current BTC/IBIT ratio
+                    if 'btc_ibit_ratio' in chain_data:
+                        analyzer.set_ibit_multiplier(chain_data['btc_ibit_ratio'])
 
                     # Find arbitrage for just this market
                     opportunities = analyzer.find_hedged_arbitrage(

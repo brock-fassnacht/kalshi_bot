@@ -12,7 +12,7 @@ try:
 except RuntimeError:
     asyncio.set_event_loop(asyncio.new_event_loop())
 
-from ib_insync import IB, Contract, Future, FuturesOption
+from ib_insync import IB, Contract, Future, FuturesOption, Stock, Option
 
 from ..config import Settings
 from ..models import IBContract, IBOrderBook, IBOrderBookLevel, IBTicker
@@ -840,5 +840,160 @@ class IBClient:
             'calls': call_data,
             'puts': put_data,
             'option_expiries': all_expiries,
+            'timestamp': datetime.utcnow(),
+        }
+
+    async def get_ibit_price(self, wait_seconds: float = 2.0) -> float:
+        """Get current IBIT ETF price."""
+        contract = Stock("IBIT", "SMART", "USD")
+        qualified = await self.ib.qualifyContractsAsync(contract)
+        if not qualified:
+            raise ValueError("Could not qualify IBIT contract")
+
+        ticker = await self.get_ticker(qualified[0], wait_seconds)
+        price = ticker.last or ticker.bid or ticker.ask
+        if price is None:
+            raise ValueError("Could not get IBIT price")
+        return price
+
+    async def get_ibit_options(
+        self,
+        target_btc_strike: float,
+        min_option_expiry: str,
+        num_strikes: int = 20,
+        wait_seconds: float = 2.0,
+    ) -> dict:
+        """
+        Fetch IBIT ETF options for arbitrage with Kalshi BTC markets.
+
+        IBIT tracks Bitcoin, so we convert Kalshi BTC strikes to equivalent IBIT strikes.
+
+        Args:
+            target_btc_strike: The Kalshi strike price in BTC terms (e.g., 150000 for $150K)
+            min_option_expiry: Minimum option expiry in YYYYMMDD format
+            num_strikes: Number of strikes to fetch (around target)
+            wait_seconds: Time to wait for market data
+
+        Returns:
+            Dictionary with options data and BTC/IBIT conversion info
+        """
+        # Get IBIT price
+        ibit_contract = Stock("IBIT", "SMART", "USD")
+        qualified_ibit = await self.ib.qualifyContractsAsync(ibit_contract)
+        if not qualified_ibit:
+            raise ValueError("Could not qualify IBIT contract")
+
+        ibit_ticker = await self.get_ticker(qualified_ibit[0], wait_seconds)
+        ibit_price = ibit_ticker.last or ibit_ticker.bid or ibit_ticker.ask
+
+        if ibit_price is None:
+            raise ValueError("Could not get IBIT price")
+
+        # Get BTC price from futures for ratio calculation
+        btc_future = await self.get_front_month_mbt()
+        btc_ticker = await self.get_ticker(btc_future, wait_seconds)
+        btc_price = btc_ticker.last or btc_ticker.bid or btc_ticker.ask
+
+        if btc_price is None:
+            raise ValueError("Could not get BTC futures price")
+
+        # Calculate BTC to IBIT ratio
+        btc_ibit_ratio = btc_price / ibit_price
+        logger.info(f"BTC: ${btc_price:,.0f}, IBIT: ${ibit_price:.2f}, Ratio: {btc_ibit_ratio:.2f}")
+
+        # Convert Kalshi BTC strike to IBIT strike
+        target_ibit_strike = target_btc_strike / btc_ibit_ratio
+        logger.info(f"Kalshi strike ${target_btc_strike:,.0f} -> IBIT strike ${target_ibit_strike:.2f}")
+
+        # Get IBIT options chain
+        chains = await self.ib.reqSecDefOptParamsAsync(
+            underlyingSymbol="IBIT",
+            futFopExchange="",
+            underlyingSecType="STK",
+            underlyingConId=qualified_ibit[0].conId,
+        )
+
+        if not chains:
+            raise ValueError("No IBIT options chains found")
+
+        # Find chain with valid expiries
+        target_chain = None
+        target_expiry = None
+
+        for chain in chains:
+            valid_expiries = sorted([e for e in chain.expirations if e > min_option_expiry])
+            if valid_expiries:
+                target_chain = chain
+                target_expiry = valid_expiries[0]
+                logger.info(f"Using IBIT options expiry {target_expiry} (exchange: {chain.exchange})")
+                break
+
+        if not target_chain or not target_expiry:
+            logger.warning(f"No IBIT options found expiring after {min_option_expiry}")
+            return {
+                'underlying_price': btc_price,
+                'ibit_price': ibit_price,
+                'btc_ibit_ratio': btc_ibit_ratio,
+                'calls': [],
+                'puts': [],
+                'option_expiry': None,
+                'timestamp': datetime.utcnow(),
+            }
+
+        # Find available strikes near target
+        available_strikes = sorted(target_chain.strikes)
+
+        # Round target to nearest available strike
+        closest_strike = min(available_strikes, key=lambda s: abs(s - target_ibit_strike))
+        closest_idx = available_strikes.index(closest_strike)
+
+        # Get strikes around the target
+        start_idx = max(0, closest_idx - num_strikes // 2)
+        end_idx = min(len(available_strikes), closest_idx + num_strikes // 2)
+        strikes_to_fetch = available_strikes[start_idx:end_idx]
+
+        logger.info(f"Fetching {len(strikes_to_fetch)} IBIT strikes from ${min(strikes_to_fetch):.2f} to ${max(strikes_to_fetch):.2f}")
+
+        # Build option contracts
+        calls_to_fetch = []
+        puts_to_fetch = []
+
+        for strike in strikes_to_fetch:
+            call = Option(
+                symbol="IBIT",
+                lastTradeDateOrContractMonth=target_expiry,
+                strike=strike,
+                right="C",
+                exchange="SMART",
+                currency="USD",
+            )
+            put = Option(
+                symbol="IBIT",
+                lastTradeDateOrContractMonth=target_expiry,
+                strike=strike,
+                right="P",
+                exchange="SMART",
+                currency="USD",
+            )
+            calls_to_fetch.append((call, target_expiry, strike))
+            puts_to_fetch.append((put, target_expiry, strike))
+
+        # Fetch prices
+        call_data = await self._fetch_option_prices(calls_to_fetch, wait_seconds)
+        put_data = await self._fetch_option_prices(puts_to_fetch, wait_seconds)
+
+        # Convert IBIT strikes back to BTC equivalent for display/calculation
+        for c in call_data:
+            c['btc_equivalent_strike'] = c['strike'] * btc_ibit_ratio
+        for p in put_data:
+            p['btc_equivalent_strike'] = p['strike'] * btc_ibit_ratio
+
+        return {
+            'underlying_price': btc_price,
+            'ibit_price': ibit_price,
+            'btc_ibit_ratio': btc_ibit_ratio,
+            'calls': call_data,
+            'puts': put_data,
+            'option_expiry': target_expiry,
             'timestamp': datetime.utcnow(),
         }

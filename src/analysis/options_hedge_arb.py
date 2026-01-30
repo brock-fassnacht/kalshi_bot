@@ -215,11 +215,25 @@ class OptionsHedgeArbitrageAnalyzer:
         self.settings = settings
         self.min_roi = settings.roi_threshold
         # Get multiplier from settings (BFF=0.01, MBT=0.1)
+        # For IBIT, this will be overridden dynamically
         self.btc_multiplier = settings.btc_multiplier
         # Spread threshold: if bid-ask spread > this % of mid, use mid pricing
         self.tight_spread_threshold = tight_spread_threshold
-        logger.info(f"Using {settings.btc_futures_symbol} with multiplier {self.btc_multiplier} BTC/contract")
+        logger.info(f"Default multiplier: {self.btc_multiplier} BTC/contract")
         logger.info(f"Tight spread threshold: {tight_spread_threshold}% (use mid if wider)")
+
+    def set_ibit_multiplier(self, btc_ibit_ratio: float):
+        """
+        Set BTC multiplier for IBIT options based on current ratio.
+
+        IBIT options: 100 shares per contract
+        BTC equivalent = 100 / btc_ibit_ratio
+
+        Example: If BTC=$100K, IBIT=$55, ratio=1818
+        Then 1 IBIT contract = 100/$55 = ~0.055 BTC
+        """
+        self.btc_multiplier = 100.0 / btc_ibit_ratio
+        logger.info(f"IBIT multiplier set to {self.btc_multiplier:.6f} BTC/contract (ratio: {btc_ibit_ratio:.1f})")
 
     def find_hedged_arbitrage(
         self,
