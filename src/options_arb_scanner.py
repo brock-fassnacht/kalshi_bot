@@ -262,17 +262,16 @@ async def run_options_arb_scan_fast(
                 if not parsed['strike'] or not parsed['expiry']:
                     continue
 
-                # We want "above" markets where NO is cheap
+                # We want "above" markets with valid NO pricing
                 # (betting BTC won't go ABOVE the strike)
                 if parsed['direction'] == 'above' and parsed['no_price']:
-                    if 5 < parsed['no_price'] < 70:  # NO between 5c and 70c
-                        parsed['market'] = m
-                        candidate_markets.append(parsed)
+                    parsed['market'] = m
+                    candidate_markets.append(parsed)
 
             # Sort by NO price (cheapest first = highest potential ROI)
             candidate_markets.sort(key=lambda x: x['no_price'])
 
-            console.print(f"Found {len(candidate_markets)} candidate markets (NO < 70c)")
+            console.print(f"Found {len(candidate_markets)} candidate markets")
 
             if not candidate_markets:
                 console.print("[yellow]No suitable markets found[/yellow]")
