@@ -115,17 +115,17 @@ class ScannerDisplay:
                 if idx in self.market_results:
                     result = self.market_results[idx]
                     if result == "opportunity":
-                        status = "[bold green]✓ OPPORTUNITY[/bold green]"
+                        status = "[bold green]* OPPORTUNITY[/bold green]"
                     elif result == "no_arb":
-                        status = "[dim]✗ No arb[/dim]"
+                        status = "[dim]- No arb[/dim]"
                     elif result == "no_data":
-                        status = "[yellow]⚠ No data[/yellow]"
+                        status = "[yellow]! No data[/yellow]"
                     elif result == "error":
-                        status = "[red]✗ Error[/red]"
+                        status = "[red]X Error[/red]"
                     else:
-                        status = "[dim]✓ Done[/dim]"
+                        status = "[dim]+ Done[/dim]"
                 elif idx == self.progress_current:
-                    status = "[yellow]► Scanning...[/yellow]"
+                    status = "[yellow]> Scanning...[/yellow]"
                 else:
                     status = "[dim]Pending[/dim]"
 
@@ -157,7 +157,7 @@ class ScannerDisplay:
         if self.errors:
             error_text.append("\n")
             for err in self.errors[-2:]:
-                error_text.append(f"⚠ {err}\n", style="red dim")
+                error_text.append(f"! {err}\n", style="red dim")
 
         # Combine all
         elements = [
@@ -393,7 +393,7 @@ async def run_options_arb_scan_fast(
     max_markets: int = 10,
 ) -> list[HedgedArbitrageOpportunity]:
     """
-    Fast targeted arbitrage scanner with live updating display.
+    Fast targeted arbitrage scanner.
 
     For each Kalshi market:
     1. Parse the strike price from ticker
@@ -413,155 +413,155 @@ async def run_options_arb_scan_fast(
 
     analyzer = OptionsHedgeArbitrageAnalyzer(settings)
     all_opportunities = []
-    display = ScannerDisplay()
 
     try:
-        with Live(display.render(), refresh_per_second=4, console=console) as live:
-            display.status = "Connecting to Kalshi and IB..."
-            live.update(display.render())
+        console.print("[cyan]Connecting to Kalshi and IB...[/cyan]")
+        async with KalshiClient(settings) as kalshi, IBClient(settings) as ib:
+            console.print("[green]Connected![/green]")
 
-            async with KalshiClient(settings) as kalshi, IBClient(settings) as ib:
-                display.status = "Connected! Fetching Kalshi markets..."
-                live.update(display.render())
+            # Step 1: Fetch Kalshi markets
+            console.print("\n[cyan]Step 1: Fetching Kalshi BTC markets...[/cyan]")
+            kalshi_markets = await kalshi.get_btc_markets()
+            console.print(f"Fetched {len(kalshi_markets)} total Kalshi markets")
 
-                # Step 1: Fetch Kalshi markets
-                kalshi_markets = await kalshi.get_btc_markets()
-                display.kalshi_total = len(kalshi_markets)
-                display.last_action = f"Fetched {len(kalshi_markets)} Kalshi markets"
-                live.update(display.render())
-
-                # Filter markets
-                candidate_markets = []
-                skipped_count = 0
-                for m in kalshi_markets:
-                    parsed = parse_kalshi_market(m)
-
-                    if not parsed['strike'] or not parsed['expiry']:
-                        continue
-
-                    # Must have at least 14 days until expiry
-                    if not m.expiration_time:
-                        skipped_count += 1
-                        continue
-
+            # Debug: show sample of raw markets before filtering
+            console.print("\n[bold]Sample markets (first 10):[/bold]")
+            for m in kalshi_markets[:10]:
+                parsed = parse_kalshi_market(m)
+                exp_time = None
+                days_to_exp = None
+                if m.expiration_time:
                     exp_time = m.expiration_time.replace(tzinfo=None) if m.expiration_time.tzinfo else m.expiration_time
-                    days_to_expiry = (exp_time - datetime.utcnow()).days
+                    days_to_exp = (exp_time - datetime.utcnow()).days
+                console.print(f"  {m.ticker}: NO={m.no_ask}c, days_left={days_to_exp}, dir={parsed.get('direction')}")
 
-                    if days_to_expiry < 14:
-                        skipped_count += 1
+            # Filter markets
+            console.print("\n[cyan]Filtering markets...[/cyan]")
+            candidate_markets = []
+            skipped_count = 0
+            skip_reasons = {"no_expiry": 0, "too_soon": 0, "short_duration": 0, "no_price": 0, "price_too_high": 0, "wrong_dir": 0}
+
+            for m in kalshi_markets:
+                parsed = parse_kalshi_market(m)
+
+                if not parsed['strike'] or not parsed['expiry']:
+                    continue
+
+                # Must have expiration time
+                if not m.expiration_time:
+                    skip_reasons["no_expiry"] += 1
+                    continue
+
+                exp_time = m.expiration_time.replace(tzinfo=None) if m.expiration_time.tzinfo else m.expiration_time
+                days_to_expiry = (exp_time - datetime.utcnow()).days
+
+                # Must have at least 3 days until expiry (to allow option hedging)
+                if days_to_expiry < 3:
+                    skip_reasons["too_soon"] += 1
+                    continue
+
+                # Duration check disabled - Kalshi BTC markets are typically short-duration
+                # if m.open_time:
+                #     duration = m.duration_days
+                #     if duration is not None and duration < 28:
+                #         skip_reasons["short_duration"] += 1
+                #         continue
+
+                # Must be "above" market
+                if parsed['direction'] != 'above':
+                    skip_reasons["wrong_dir"] += 1
+                    continue
+
+                # Must have valid NO price
+                if not parsed['no_price']:
+                    skip_reasons["no_price"] += 1
+                    continue
+
+                # NO price must be under 97c
+                if parsed['no_price'] >= 97:
+                    skip_reasons["price_too_high"] += 1
+                    continue
+
+                parsed['market'] = m
+                parsed['days_to_expiry'] = days_to_expiry
+                candidate_markets.append(parsed)
+
+            # Show skip reasons
+            console.print(f"\n[bold]Filter results:[/bold]")
+            console.print(f"  Passed filters: {len(candidate_markets)}")
+            console.print(f"  Skipped - expires too soon (<3d): {skip_reasons['too_soon']}")
+            console.print(f"  Skipped - NO price >= 97c: {skip_reasons['price_too_high']}")
+            console.print(f"  Skipped - wrong direction (not 'above'): {skip_reasons['wrong_dir']}")
+            console.print(f"  Skipped - no NO price: {skip_reasons['no_price']}")
+            console.print(f"  Skipped - short duration: {skip_reasons['short_duration']}")
+            console.print(f"  Skipped - no expiry: {skip_reasons['no_expiry']}")
+
+            if not candidate_markets:
+                console.print("\n[yellow]No markets passed filters![/yellow]")
+                return []
+
+            # Sort by NO price (cheapest first)
+            candidate_markets.sort(key=lambda x: x['no_price'])
+
+            # Show candidates
+            console.print(f"\n[bold]Candidates to scan (top {min(max_markets, len(candidate_markets))}):[/bold]")
+            for i, m in enumerate(candidate_markets[:max_markets]):
+                console.print(f"  {i+1}. ${m['strike']:,.0f} | NO={m['no_price']}c | {m['days_to_expiry']}d left")
+
+            # Step 2: Scan each market
+            console.print(f"\n[cyan]Step 2: Scanning {min(max_markets, len(candidate_markets))} markets...[/cyan]")
+
+            for i, candidate in enumerate(candidate_markets[:max_markets]):
+                console.print(f"\n[bold]Market {i+1}/{min(max_markets, len(candidate_markets))}:[/bold] ${candidate['strike']:,.0f}")
+
+                try:
+                    console.print(f"  Fetching IBIT options...")
+                    chain_data = await ib.get_ibit_options(
+                        target_btc_strike=candidate['strike'],
+                        min_option_expiry=candidate['expiry'],
+                        num_strikes=20,
+                        wait_seconds=2.0,
+                    )
+
+                    ibit_price = chain_data.get('ibit_price', 0)
+                    btc_price = chain_data.get('underlying_price', 0)
+                    ratio = chain_data.get('btc_ibit_ratio', 0)
+                    console.print(f"  IBIT=${ibit_price:.2f}, BTC=${btc_price:,.0f}, ratio={ratio:.1f}")
+
+                    if not chain_data['calls']:
+                        console.print("  [yellow]No IBIT options data[/yellow]")
                         continue
 
-                    # If we have open_time, check duration is at least 28 days
-                    # If no open_time, skip this check (can't determine duration)
-                    if m.open_time:
-                        duration = m.duration_days
-                        if duration is not None and duration < 28:
-                            skipped_count += 1
-                            continue
+                    calls_with_any = [c for c in chain_data['calls'] if c.get('bid') or c.get('ask') or c.get('last')]
+                    console.print(f"  Got {len(calls_with_any)} options with prices")
 
-                    # Must be "above" market with valid NO price under 97c
-                    if parsed['direction'] == 'above' and parsed['no_price']:
-                        if parsed['no_price'] >= 97:
-                            skipped_count += 1
-                            continue
-                        parsed['market'] = m
-                        parsed['days_to_expiry'] = days_to_expiry  # Store for display
-                        candidate_markets.append(parsed)
-
-                candidate_markets.sort(key=lambda x: x['no_price'])
-                display.kalshi_filtered = len(candidate_markets)
-                display.candidate_markets = candidate_markets  # Store for display
-                display.last_action = f"Filtered to {len(candidate_markets)} candidates (skipped {skipped_count} that had <14d to expiry or NO>=97c)"
-                live.update(display.render())
-
-                if not candidate_markets:
-                    display.status = "No suitable markets found"
-                    display.errors.append("No markets passed filters")
-                    live.update(display.render())
-                    await asyncio.sleep(2)
-                    return []
-
-                # Step 2: Scan each market
-                display.progress_total = min(max_markets, len(candidate_markets))
-                display.status = "Scanning markets for arbitrage..."
-
-                for i, candidate in enumerate(candidate_markets[:max_markets]):
-                    display.progress_current = i + 1
-                    display.current_market = candidate['ticker']
-                    display.current_strike = candidate['strike']
-                    display.last_action = f"Fetching IBIT options for ${candidate['strike']:,.0f}..."
-                    live.update(display.render())
-
-                    try:
-                        chain_data = await ib.get_ibit_options(
-                            target_btc_strike=candidate['strike'],
-                            min_option_expiry=candidate['expiry'],
-                            num_strikes=20,
-                            wait_seconds=2.0,
-                        )
-
-                        # Update display with price info
-                        display.ibit_price = chain_data.get('ibit_price', 0)
-                        display.btc_price = chain_data.get('underlying_price', 0)
-                        display.btc_ibit_ratio = chain_data.get('btc_ibit_ratio', 0)
-
-                        if not chain_data['calls']:
-                            display.last_action = f"No IBIT options for ${candidate['strike']:,.0f}"
-                            display.market_results[i + 1] = "no_data"
-                            live.update(display.render())
-                            continue
-
-                        calls_with_any = [c for c in chain_data['calls'] if c.get('bid') or c.get('ask') or c.get('last')]
-                        display.last_action = f"Got {len(calls_with_any)} options with prices"
-                        live.update(display.render())
-
-                        if not calls_with_any:
-                            display.market_results[i + 1] = "no_data"
-                            continue
-
-                        # Convert and analyze
-                        options_chain = convert_chain_data_to_options_chain(chain_data)
-
-                        if 'btc_ibit_ratio' in chain_data:
-                            analyzer.set_ibit_multiplier(chain_data['btc_ibit_ratio'])
-
-                        opportunities = analyzer.find_hedged_arbitrage(
-                            kalshi_markets=[candidate['market']],
-                            options_chain=options_chain,
-                        )
-
-                        if opportunities:
-                            all_opportunities.extend(opportunities)
-                            display.opportunities_found = len(all_opportunities)
-                            display.opportunities = all_opportunities
-                            display.last_action = f"Found opportunity! ROI: {opportunities[0].roi*100:.1f}%"
-                            display.market_results[i + 1] = "opportunity"
-                        else:
-                            display.last_action = f"No arb at ${candidate['strike']:,.0f}"
-                            display.market_results[i + 1] = "no_arb"
-
-                        live.update(display.render())
-
-                    except Exception as e:
-                        error_msg = str(e)[:50]
-                        display.errors.append(f"{candidate['ticker']}: {error_msg}")
-                        display.last_action = f"Error: {error_msg}"
-                        display.market_results[i + 1] = "error"
-                        logger.exception(f"Error scanning market {candidate['ticker']}")
-                        live.update(display.render())
+                    if not calls_with_any:
+                        console.print("  [yellow]No options with price data[/yellow]")
                         continue
 
-                # Final status
-                display.status = "Scan complete!"
-                display.current_market = ""
-                if all_opportunities:
-                    display.last_action = f"Found {len(all_opportunities)} total opportunities"
-                else:
-                    display.last_action = "No arbitrage opportunities found"
-                live.update(display.render())
-                await asyncio.sleep(1)
+                    # Convert and analyze
+                    options_chain = convert_chain_data_to_options_chain(chain_data)
 
-        # After live display ends, show detailed results
+                    if 'btc_ibit_ratio' in chain_data:
+                        analyzer.set_ibit_multiplier(chain_data['btc_ibit_ratio'])
+
+                    opportunities = analyzer.find_hedged_arbitrage(
+                        kalshi_markets=[candidate['market']],
+                        options_chain=options_chain,
+                    )
+
+                    if opportunities:
+                        all_opportunities.extend(opportunities)
+                        console.print(f"  [bold green]FOUND OPPORTUNITY! ROI: {opportunities[0].roi*100:.1f}%[/bold green]")
+                    else:
+                        console.print(f"  [dim]No profitable arbitrage[/dim]")
+
+                except Exception as e:
+                    console.print(f"  [red]Error: {e}[/red]")
+                    logger.exception(f"Error scanning market {candidate['ticker']}")
+                    continue
+
+        # Show results
         if all_opportunities:
             console.print(f"\n[bold green]{'='*60}[/bold green]")
             display_hedged_opportunities(all_opportunities)
