@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     new_market_hours: int = 24  # Show markets opened in last N hours
     price_change_lookback_hours: int = 24  # Lookback window for price changes
 
+    # Market filters
+    min_expiry_hours: int = 24  # Exclude markets expiring within N hours
+    near_mid_range_cents: int = 20  # Range around midpoint for depth calc
+    min_near_mid_depth_dollars: float = 500  # Min $ depth within range of mid
+    min_oi_prefilter: int = 500  # Basic OI pre-filter before fetching orderbooks
+    max_orderbook_fetches: int = 75  # Cap on how many orderbooks to fetch per refresh
+    orderbook_concurrency: int = 10  # Max concurrent orderbook API requests
+
     @property
     def private_key(self) -> str:
         """Load private key from file."""
