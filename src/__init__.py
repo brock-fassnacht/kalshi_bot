@@ -1,1 +1,1 @@
-"""Kalshi Statistical Arbitrage Bot."""
+"""Kalshi Market Dashboard."""

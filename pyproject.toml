@@ -1,13 +1,12 @@
 [project]
-name = "kalshi-arb-bot"
-version = "0.1.0"
-description = "Statistical arbitrage bot for Kalshi prediction markets"
+name = "kalshi-dashboard"
+version = "0.2.0"
+description = "Monitor-only dashboard for Kalshi prediction markets"
 requires-python = ">=3.10"
 dependencies = [
     "httpx>=0.27.0",           # Async HTTP client for API calls
     "pandas>=2.0.0",           # Data manipulation and analysis
     "numpy>=1.24.0",           # Numerical computing
-    "scipy>=1.11.0",           # Statistical functions
     "pydantic>=2.0.0",         # Data validation and models
     "pydantic-settings>=2.0.0", # Settings management
     "python-dotenv>=1.0.0",    # Environment variable loading
@@ -16,6 +15,7 @@ dependencies = [
     "sqlalchemy>=2.0.0",       # Database ORM for data persistence
     "aiosqlite>=0.19.0",       # Async SQLite support
     "cryptography>=41.0.0",    # RSA signing for API authentication
+    "streamlit>=1.32.0",       # Dashboard UI
 ]
 
 [project.optional-dependencies]
