@@ -51,6 +51,14 @@ def render_sidebar(categories: list[str]) -> dict:
 
         show_active_only = st.checkbox("Active markets only", value=True)
 
+        max_days_to_expiry = st.number_input(
+            "Max days until expiry",
+            min_value=0,
+            value=0,
+            step=1,
+            help="Only show events expiring within this many days (0 = no filter)",
+        )
+
     return {
         "refresh_clicked": refresh_clicked,
         "auto_refresh": auto_refresh,
@@ -59,4 +67,5 @@ def render_sidebar(categories: list[str]) -> dict:
         "categories": selected_categories,
         "min_volume": min_volume,
         "show_active_only": show_active_only,
+        "max_days_to_expiry": max_days_to_expiry,
     }

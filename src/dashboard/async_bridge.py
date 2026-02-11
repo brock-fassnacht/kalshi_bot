@@ -33,10 +33,10 @@ class AsyncBridge:
         asyncio.set_event_loop(self._loop)
         self._loop.run_forever()
 
-    def run(self, coro: Coroutine) -> Any:
+    def run(self, coro: Coroutine, timeout: float = 300) -> Any:
         """Submit a coroutine to the background loop and wait for the result."""
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result(timeout=120)
+        return future.result(timeout=timeout)
 
 
 def get_bridge() -> AsyncBridge:

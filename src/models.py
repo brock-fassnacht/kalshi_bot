@@ -96,8 +96,9 @@ class OrderbookSummary(BaseModel):
     ticker: str
     total_yes_depth_dollars: float = 0.0  # Total $ on YES side
     total_no_depth_dollars: float = 0.0   # Total $ on NO side
-    near_touch_yes_dollars: float = 0.0   # YES $ within 5c of best
-    near_touch_no_dollars: float = 0.0    # NO $ within 5c of best
+    near_touch_yes_dollars: float = 0.0   # YES $ within range of best
+    near_touch_no_dollars: float = 0.0    # NO $ within range of best
+    near_mid_depth_dollars: float = 0.0   # Combined YES+NO $ within range of midpoint
     yes_levels: int = 0
     no_levels: int = 0
     best_yes_price: Optional[int] = None

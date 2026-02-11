@@ -1,16 +1,22 @@
 """Main Streamlit dashboard for Kalshi market monitoring."""
 
+import sys
 import time
+from pathlib import Path
+
+_project_root = str(Path(__file__).resolve().parent.parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 import streamlit as st
 
-from ..config import get_settings
-from .data_service import DashboardDataService
-from .components.sidebar import render_sidebar
-from .components.market_table import render_market_table
-from .components.new_markets import render_new_markets
-from .components.price_movers import render_price_movers
-from .components.orderbook_detail import render_orderbook_detail
+from src.config import get_settings
+from src.dashboard.data_service import DashboardDataService
+from src.dashboard.components.sidebar import render_sidebar
+from src.dashboard.components.market_table import render_market_table
+from src.dashboard.components.new_markets import render_new_markets
+from src.dashboard.components.price_movers import render_price_movers
+from src.dashboard.components.orderbook_detail import render_orderbook_detail
 
 st.set_page_config(
     page_title="Kalshi Market Dashboard",
@@ -19,56 +25,80 @@ st.set_page_config(
 )
 
 
-def get_data_service() -> DashboardDataService:
-    """Get or create the data service singleton in session state."""
-    if "data_service" not in st.session_state:
-        settings = get_settings()
-        st.session_state.data_service = DashboardDataService(settings)
-    return st.session_state.data_service
+def get_service() -> DashboardDataService:
+    if "service" not in st.session_state:
+        st.session_state.service = DashboardDataService(get_settings())
+    return st.session_state.service
+
+
+def show_worker_progress(service: DashboardDataService):
+    """Poll worker status and show a progress bar. Rerun until done."""
+    status = service.get_worker_status()
+
+    if status and status["is_running"]:
+        st.progress(status["progress"], text=status["message"])
+        time.sleep(1)
+        st.rerun()
+    elif status and status["stage"] == "error":
+        st.error(f"Refresh failed: {status['message']}")
+    elif status and status["stage"] == "done":
+        st.toast(f"Refresh complete: {status['qualified_markets']} qualified markets")
 
 
 def main():
-    service = get_data_service()
+    service = get_service()
 
-    # Initialize data on first load
-    if "master_df" not in st.session_state:
-        with st.spinner("Loading markets..."):
-            service.refresh_markets()
-            st.session_state.master_df = service.build_master_dataframe()
-            st.session_state.last_refresh = time.time()
+    # Auto-start first refresh if DB is empty
+    df = service.get_qualified_dataframe()
+    if df.empty and not service.is_refreshing():
+        service.start_refresh()
+
+    # If worker is running, show progress and keep polling
+    if service.is_refreshing():
+        st.title("Kalshi Market Dashboard")
+        st.info("Background data refresh in progress...")
+        show_worker_progress(service)
+        return
+
+    # Worker finished but we haven't loaded data yet
+    df = service.get_qualified_dataframe()
 
     # Sidebar
     categories = service.get_categories()
     filters = render_sidebar(categories)
 
-    # Handle refresh
-    should_refresh = filters["refresh_clicked"]
-    if filters["auto_refresh"] and filters["refresh_interval"]:
-        elapsed = time.time() - st.session_state.get("last_refresh", 0)
-        if elapsed >= filters["refresh_interval"]:
-            should_refresh = True
+    # Handle manual refresh
+    if filters["refresh_clicked"] and not service.is_refreshing():
+        service.start_refresh()
+        st.rerun()
 
-    if should_refresh:
-        with st.spinner("Refreshing markets..."):
-            service.refresh_markets()
-            st.session_state.master_df = service.build_master_dataframe()
-            st.session_state.last_refresh = time.time()
+    # Show status
+    status = service.get_worker_status()
 
-    df = st.session_state.get("master_df")
-    if df is None or df.empty:
-        st.warning("No market data loaded. Click 'Refresh Now' in the sidebar.")
+    if df.empty:
+        st.warning("No markets in database yet. Click 'Refresh Now' to start.")
+        if status:
+            st.info(f"Last status: {status['message']}")
         return
 
     # KPI cards
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Total Markets", len(df))
+        st.metric("Qualified Markets", len(df))
     with col2:
         total_vol = int(df["volume"].sum()) if "volume" in df.columns else 0
         st.metric("Total Volume", f"{total_vol:,}")
     with col3:
-        active = len(df[df["status"].isin(["open", "active"])]) if "status" in df.columns else 0
-        st.metric("Active Markets", active)
+        if status:
+            st.metric("Total Scanned", status["total_markets"])
+    with col4:
+        if "near_mid_depth" in df.columns:
+            total_depth = int(df["near_mid_depth"].sum())
+            st.metric("Total Near-Mid $", f"${total_depth:,}")
+
+    # Show last refresh time
+    if status and status.get("updated_at"):
+        st.caption(f"Last refreshed: {status['updated_at'].strftime('%Y-%m-%d %H:%M:%S')} UTC")
 
     # Tabs
     tab_all, tab_new, tab_movers = st.tabs(["All Markets", "New Markets", "Price Movers"])
@@ -76,28 +106,46 @@ def main():
     with tab_all:
         selected_ticker = render_market_table(df, filters)
 
-        # Orderbook detail on row select
         if selected_ticker:
             st.divider()
-            with st.spinner(f"Fetching orderbook for {selected_ticker}..."):
+            with st.spinner(f"Loading orderbook for {selected_ticker}..."):
                 try:
-                    summary, raw_ob = service.fetch_orderbook(selected_ticker)
-                    render_orderbook_detail(summary, raw_ob)
+                    summary, raw_ob = service.fetch_orderbook_detail(selected_ticker)
+                    if summary and raw_ob:
+                        render_orderbook_detail(summary, raw_ob)
+                    else:
+                        st.warning("No orderbook data available.")
                 except Exception as e:
                     st.error(f"Failed to fetch orderbook: {e}")
 
     with tab_new:
-        new_df = service.get_new_markets()
-        render_new_markets(new_df)
+        from datetime import timedelta
+        cutoff = datetime.utcnow() - timedelta(hours=get_settings().new_market_hours)
+        new_events_df = service.get_new_events_dataframe(cutoff)
+        # Apply days-to-expiry filter (keep only events expiring within N days)
+        if not new_events_df.empty and filters["max_days_to_expiry"] > 0:
+            expiry_cutoff = datetime.utcnow() + timedelta(days=filters["max_days_to_expiry"])
+            new_events_df = new_events_df[
+                new_events_df["close_time"].notna() & (new_events_df["close_time"] <= expiry_cutoff)
+            ]
+        render_new_markets(new_events_df)
 
     with tab_movers:
         render_price_movers(df)
 
-    # Auto-refresh via rerun
+    # Auto-refresh: kick off background worker, then schedule a rerun
     if filters["auto_refresh"] and filters["refresh_interval"]:
+        if status and status.get("updated_at"):
+            elapsed = (datetime.utcnow() - status["updated_at"]).total_seconds()
+            if elapsed >= filters["refresh_interval"] and not service.is_refreshing():
+                service.start_refresh()
         time.sleep(filters["refresh_interval"])
         st.rerun()
 
+
+# Need this import at module level for the auto-refresh datetime check
+from datetime import datetime
+import pandas as pd
 
 if __name__ == "__main__":
     main()

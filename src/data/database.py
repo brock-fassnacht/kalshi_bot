@@ -82,6 +82,23 @@ class QualifiedMarket(Base):
     updated_at = Column(DateTime, nullable=False, index=True)
 
 
+class EventSummary(Base):
+    """Event-level summary aggregated from all sub-markets."""
+
+    __tablename__ = "event_summaries"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_ticker = Column(String(100), nullable=False, unique=True, index=True)
+    title = Column(Text)
+    category = Column(String(100))
+    market_count = Column(Integer, default=0)
+    total_volume = Column(Integer, default=0)
+    total_oi = Column(Integer, default=0)
+    open_time = Column(DateTime)
+    close_time = Column(DateTime)
+    updated_at = Column(DateTime, nullable=False, index=True)
+
+
 class OrderbookCache(Base):
     """Cached orderbook summary for each market."""
 
@@ -199,6 +216,26 @@ class Database:
         async with self.session_factory() as session:
             result = await session.execute(
                 select(QualifiedMarket).order_by(QualifiedMarket.volume.desc())
+            )
+            return list(result.scalars().all())
+
+    # ---- Event Summaries ----
+
+    async def replace_event_summaries(self, records: list[dict]) -> None:
+        """Replace all event summaries with a new set."""
+        async with self.session_factory() as session:
+            await session.execute(delete(EventSummary))
+            for r in records:
+                session.add(EventSummary(**r))
+            await session.commit()
+
+    async def get_new_events(self, since: datetime) -> list[EventSummary]:
+        """Return events with open_time >= since, ordered by open_time desc."""
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(EventSummary)
+                .where(EventSummary.open_time >= since)
+                .order_by(EventSummary.open_time.desc())
             )
             return list(result.scalars().all())
 

@@ -5,8 +5,8 @@ import json
 import pandas as pd
 import streamlit as st
 
-from ...data.orderbook import kalshi_orderbook_to_df
-from ...models import OrderbookSummary
+from src.data.orderbook import kalshi_orderbook_to_df
+from src.models import OrderbookSummary
 
 
 def render_orderbook_detail(summary: OrderbookSummary, raw_orderbook: dict):
@@ -14,25 +14,17 @@ def render_orderbook_detail(summary: OrderbookSummary, raw_orderbook: dict):
     st.subheader(f"Orderbook: {summary.ticker}")
 
     # Summary metrics
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
-        st.metric("YES Depth", f"${summary.total_yes_depth_dollars:.2f}")
+        st.metric("Near-Mid Depth", f"${summary.near_mid_depth_dollars:,.0f}")
     with col2:
-        st.metric("NO Depth", f"${summary.total_no_depth_dollars:.2f}")
+        st.metric("YES Depth", f"${summary.total_yes_depth_dollars:,.0f}")
     with col3:
-        st.metric("YES Near-Touch", f"${summary.near_touch_yes_dollars:.2f}")
+        st.metric("NO Depth", f"${summary.total_no_depth_dollars:,.0f}")
     with col4:
-        st.metric("NO Near-Touch", f"${summary.near_touch_no_dollars:.2f}")
-
-    col5, col6, col7, col8 = st.columns(4)
-    with col5:
-        st.metric("YES Levels", summary.yes_levels)
-    with col6:
-        st.metric("NO Levels", summary.no_levels)
-    with col7:
         best = f"{summary.best_yes_price}c" if summary.best_yes_price else "N/A"
         st.metric("Best YES", best)
-    with col8:
+    with col5:
         best = f"{summary.best_no_price}c" if summary.best_no_price else "N/A"
         st.metric("Best NO", best)
 

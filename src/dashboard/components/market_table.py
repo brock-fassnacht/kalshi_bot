@@ -1,5 +1,7 @@
 """Market table component - sortable table with all market data."""
 
+from datetime import datetime
+
 import pandas as pd
 import streamlit as st
 
@@ -60,11 +62,11 @@ def render_market_table(df: pd.DataFrame, filters: dict) -> str | None:
     }
 
     # Add orderbook columns if available
+    if "near_mid_depth" in filtered.columns:
+        display_cols["near_mid_depth"] = "Near-Mid $"
     if "total_yes_depth" in filtered.columns:
         display_cols["total_yes_depth"] = "Depth $ (Y)"
         display_cols["total_no_depth"] = "Depth $ (N)"
-        display_cols["near_touch_yes"] = "Near $ (Y)"
-        display_cols["near_touch_no"] = "Near $ (N)"
 
     # Add price change if available
     if "price_change_24h" in filtered.columns:
@@ -72,6 +74,15 @@ def render_market_table(df: pd.DataFrame, filters: dict) -> str | None:
 
     if "open_time" in filtered.columns:
         display_cols["open_time"] = "Opened"
+
+    # Compute days to expiry
+    if "close_time" in filtered.columns:
+        now = datetime.utcnow()
+        filtered = filtered.copy()
+        filtered["days_to_expiry"] = filtered["close_time"].apply(
+            lambda ct: round((ct - now).total_seconds() / 86400, 1) if pd.notna(ct) else None
+        )
+        display_cols["days_to_expiry"] = "Days to Expiry"
 
     # Only keep columns that exist
     available_cols = [c for c in display_cols.keys() if c in filtered.columns]
@@ -97,10 +108,10 @@ def render_market_table(df: pd.DataFrame, filters: dict) -> str | None:
             "Volume": st.column_config.NumberColumn(format="%d"),
             "OI": st.column_config.NumberColumn(format="%d"),
             "24h Chg": st.column_config.NumberColumn(format="%+d"),
-            "Depth $ (Y)": st.column_config.NumberColumn(format="$%.2f"),
-            "Depth $ (N)": st.column_config.NumberColumn(format="$%.2f"),
-            "Near $ (Y)": st.column_config.NumberColumn(format="$%.2f"),
-            "Near $ (N)": st.column_config.NumberColumn(format="$%.2f"),
+            "Near-Mid $": st.column_config.NumberColumn(format="$%,.0f"),
+            "Depth $ (Y)": st.column_config.NumberColumn(format="$%,.0f"),
+            "Depth $ (N)": st.column_config.NumberColumn(format="$%,.0f"),
+            "Days to Expiry": st.column_config.NumberColumn(format="%.1f"),
         },
     )
 

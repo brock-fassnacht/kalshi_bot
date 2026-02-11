@@ -96,6 +96,30 @@ class DashboardDataService:
             all_markets = {m.ticker: m for m in all_markets_list}
             total = len(all_markets)
 
+            # Build event summaries from ALL markets (before OI filter)
+            event_groups: dict[str, list] = {}
+            for m in all_markets.values():
+                event_groups.setdefault(m.event_ticker, []).append(m)
+
+            event_records = []
+            now_es = datetime.utcnow()
+            for evt_ticker, markets in event_groups.items():
+                open_times = [m.open_time for m in markets if m.open_time]
+                close_times = [m.close_time for m in markets if m.close_time]
+                event_records.append({
+                    "event_ticker": evt_ticker,
+                    "title": markets[0].title,
+                    "category": markets[0].category,
+                    "market_count": len(markets),
+                    "total_volume": sum(m.volume for m in markets),
+                    "total_oi": sum(m.open_interest for m in markets),
+                    "open_time": min(open_times) if open_times else None,
+                    "close_time": min(close_times) if close_times else None,
+                    "updated_at": now_es,
+                })
+            await db.replace_event_summaries(event_records)
+            logger.info(f"Stored {len(event_records)} event summaries")
+
             await db.update_worker_status(
                 stage="filtering",
                 message=f"Fetched {total} markets, applying OI filter...",
@@ -158,8 +182,11 @@ class DashboardDataService:
             # Parallel fetch with semaphore for rate limiting
             semaphore = asyncio.Semaphore(settings.orderbook_concurrency)
             fetch_results: dict[str, tuple] = {}  # ticker -> (summary, raw_ob)
+            fetch_count = 0
+            fetch_total = len(tickers_to_fetch)
 
             async def _fetch_one(ticker: str):
+                nonlocal fetch_count
                 async with semaphore:
                     try:
                         market = after_oi[ticker]
@@ -173,6 +200,16 @@ class DashboardDataService:
                         fetch_results[ticker] = (summary, raw_ob)
                     except Exception as e:
                         logger.warning(f"Orderbook fetch failed for {ticker}: {e}")
+                    finally:
+                        fetch_count += 1
+                        if fetch_total > 0 and fetch_count % 10 == 0:
+                            pct = 0.3 + 0.6 * (fetch_count / fetch_total)
+                            await db.update_worker_status(
+                                stage="fetching_orderbooks",
+                                message=f"Orderbooks: {fetch_count}/{fetch_total} fetched ({skipped} cached)...",
+                                progress=min(pct, 0.9), total_markets=total,
+                                filtered_markets=ob_total, is_running=True,
+                            )
 
             # Launch all fetches concurrently (semaphore limits parallelism)
             if tickers_to_fetch:
@@ -326,6 +363,32 @@ class DashboardDataService:
                 "near_mid_depth": r.near_mid_depth,
                 "price_change_24h": r.price_change_24h,
                 "updated_at": r.updated_at,
+            })
+
+        return pd.DataFrame(records)
+
+    def get_new_events_dataframe(self, since: datetime) -> pd.DataFrame:
+        """Read new events from DB. No API calls."""
+        self._ensure_db()
+        db = self._get_db()
+        loop = asyncio.new_event_loop()
+        rows = loop.run_until_complete(db.get_new_events(since))
+        loop.close()
+
+        if not rows:
+            return pd.DataFrame()
+
+        records = []
+        for r in rows:
+            records.append({
+                "event_ticker": r.event_ticker,
+                "title": r.title,
+                "category": r.category,
+                "market_count": r.market_count,
+                "total_volume": r.total_volume,
+                "total_oi": r.total_oi,
+                "open_time": r.open_time,
+                "close_time": r.close_time,
             })
 
         return pd.DataFrame(records)

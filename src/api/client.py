@@ -21,7 +21,7 @@ class KalshiClient:
         self._client: Optional[httpx.AsyncClient] = None
 
     async def __aenter__(self) -> "KalshiClient":
-        self._client = httpx.AsyncClient(timeout=30.0)
+        self._client = httpx.AsyncClient(timeout=60.0)
         return self
 
     async def __aexit__(self, *args) -> None:
@@ -101,6 +101,8 @@ class KalshiClient:
         event_ticker: Optional[str] = None,
         series_ticker: Optional[str] = None,
         status: Optional[str] = None,
+        min_close_ts: Optional[int] = None,
+        max_close_ts: Optional[int] = None,
     ) -> tuple[list[Market], Optional[str]]:
         """
         Fetch markets with optional filters.
@@ -117,6 +119,10 @@ class KalshiClient:
             params["series_ticker"] = series_ticker
         if status:
             params["status"] = status
+        if min_close_ts is not None:
+            params["min_close_ts"] = min_close_ts
+        if max_close_ts is not None:
+            params["max_close_ts"] = max_close_ts
 
         data = await self._request("GET", "/markets", params=params)
 
@@ -133,23 +139,31 @@ class KalshiClient:
         self,
         status: str = "open",
         event_ticker: Optional[str] = None,
+        max_pages: int = 20,
+        min_close_ts: Optional[int] = None,
+        max_close_ts: Optional[int] = None,
     ) -> list[Market]:
         """Fetch all markets, handling pagination automatically."""
         all_markets = []
         cursor = None
 
-        while True:
+        for page in range(max_pages):
             markets, cursor = await self.get_markets(
                 cursor=cursor,
                 limit=200,
                 status=status,
                 event_ticker=event_ticker,
+                min_close_ts=min_close_ts,
+                max_close_ts=max_close_ts,
             )
             all_markets.extend(markets)
-            logger.debug(f"Fetched {len(markets)} markets, total: {len(all_markets)}")
+            logger.debug(f"Fetched {len(markets)} markets, total: {len(all_markets)} (page {page + 1})")
 
-            if not cursor:
+            if not cursor or not markets:
                 break
+
+        if cursor:
+            logger.warning(f"Hit max_pages={max_pages} cap at {len(all_markets)} markets")
 
         return all_markets
 
