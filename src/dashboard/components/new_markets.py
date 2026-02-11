@@ -1,9 +1,9 @@
 """New markets tab - recently opened events."""
 
-from datetime import datetime
-
 import pandas as pd
 import streamlit as st
+
+from src.dashboard.utils import compute_days_to_expiry
 
 
 def render_new_markets(df: pd.DataFrame):
@@ -14,12 +14,15 @@ def render_new_markets(df: pd.DataFrame):
 
     st.caption(f"{len(df)} new events")
 
-    # Add days-to-expiry column
-    if "close_time" in df.columns:
-        now = datetime.utcnow()
+    # Add days-to-expiry column (prefer ticker-derived date, fall back to close_time)
+    if "event_ticker" in df.columns:
         df = df.copy()
-        df["days_to_expiry"] = df["close_time"].apply(
-            lambda ct: round((ct - now).total_seconds() / 86400, 1) if pd.notna(ct) else None
+        df["days_to_expiry"] = df.apply(
+            lambda row: compute_days_to_expiry(
+                row["event_ticker"],
+                row.get("close_time"),
+            ),
+            axis=1,
         )
 
     st.dataframe(

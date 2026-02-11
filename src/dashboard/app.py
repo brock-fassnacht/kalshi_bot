@@ -31,20 +31,6 @@ def get_service() -> DashboardDataService:
     return st.session_state.service
 
 
-def show_worker_progress(service: DashboardDataService):
-    """Poll worker status and show a progress bar. Rerun until done."""
-    status = service.get_worker_status()
-
-    if status and status["is_running"]:
-        st.progress(status["progress"], text=status["message"])
-        time.sleep(1)
-        st.rerun()
-    elif status and status["stage"] == "error":
-        st.error(f"Refresh failed: {status['message']}")
-    elif status and status["stage"] == "done":
-        st.toast(f"Refresh complete: {status['qualified_markets']} qualified markets")
-
-
 def main():
     service = get_service()
 
@@ -52,16 +38,6 @@ def main():
     df = service.get_qualified_dataframe()
     if df.empty and not service.is_refreshing():
         service.start_refresh()
-
-    # If worker is running, show progress and keep polling
-    if service.is_refreshing():
-        st.title("Kalshi Market Dashboard")
-        st.info("Background data refresh in progress...")
-        show_worker_progress(service)
-        return
-
-    # Worker finished but we haven't loaded data yet
-    df = service.get_qualified_dataframe()
 
     # Sidebar
     categories = service.get_categories()
@@ -71,6 +47,22 @@ def main():
     if filters["refresh_clicked"] and not service.is_refreshing():
         service.start_refresh()
         st.rerun()
+
+    # Show progress if refreshing, then poll
+    if service.is_refreshing():
+        status = service.get_worker_status()
+        if status and status["is_running"]:
+            st.progress(status["progress"], text=status["message"])
+            time.sleep(1)
+            st.rerun()
+
+    # Check for errors
+    status = service.get_worker_status()
+    if status and status["stage"] == "error":
+        st.error(f"Refresh failed: {status['message']}")
+
+    # Load data
+    df = service.get_qualified_dataframe()
 
     # Show status
     status = service.get_worker_status()

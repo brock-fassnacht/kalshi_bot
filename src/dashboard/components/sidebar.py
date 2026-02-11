@@ -51,6 +51,14 @@ def render_sidebar(categories: list[str]) -> dict:
 
         show_active_only = st.checkbox("Active markets only", value=True)
 
+        min_yes_ask = st.number_input(
+            "Min Yes Ask (cents)",
+            min_value=0,
+            value=0,
+            step=1,
+            help="Only show markets with Yes Ask >= this value",
+        )
+
         max_days_to_expiry = st.number_input(
             "Max days until expiry",
             min_value=0,
@@ -67,5 +75,6 @@ def render_sidebar(categories: list[str]) -> dict:
         "categories": selected_categories,
         "min_volume": min_volume,
         "show_active_only": show_active_only,
+        "min_yes_ask": min_yes_ask,
         "max_days_to_expiry": max_days_to_expiry,
     }

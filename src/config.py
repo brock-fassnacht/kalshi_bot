@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     min_expiry_hours: int = 24  # Exclude markets expiring within N hours
     near_mid_range_cents: int = 20  # Range around midpoint for depth calc
     min_near_mid_depth_dollars: float = 500  # Min $ depth within range of mid
+    min_yes_depth_dollars: float = 5000  # Min $ depth on YES side
+    min_no_depth_dollars: float = 5000  # Min $ depth on NO side
+    min_yes_ask_prefilter: int = 5  # Exclude markets with yes_ask below this (cents)
     min_oi_prefilter: int = 500  # Basic OI pre-filter before fetching orderbooks
     max_orderbook_fetches: int = 1000  # Cap on how many orderbooks to fetch per refresh
     orderbook_concurrency: int = 10  # Max concurrent orderbook API requests

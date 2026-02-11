@@ -1,9 +1,9 @@
 """Market table component - sortable table with all market data."""
 
-from datetime import datetime
-
 import pandas as pd
 import streamlit as st
+
+from src.dashboard.utils import compute_days_to_expiry
 
 
 def apply_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
@@ -33,6 +33,10 @@ def apply_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
     # Active only
     if filters.get("show_active_only"):
         filtered = filtered[filtered["status"].isin(["open", "active"])]
+
+    # Min yes ask filter
+    if filters.get("min_yes_ask", 0) > 0:
+        filtered = filtered[filtered["yes_ask"] >= filters["min_yes_ask"]]
 
     return filtered
 
@@ -75,12 +79,15 @@ def render_market_table(df: pd.DataFrame, filters: dict) -> str | None:
     if "open_time" in filtered.columns:
         display_cols["open_time"] = "Opened"
 
-    # Compute days to expiry
-    if "close_time" in filtered.columns:
-        now = datetime.utcnow()
+    # Compute days to expiry (prefer ticker-derived date, fall back to close_time)
+    if "ticker" in filtered.columns:
         filtered = filtered.copy()
-        filtered["days_to_expiry"] = filtered["close_time"].apply(
-            lambda ct: round((ct - now).total_seconds() / 86400, 1) if pd.notna(ct) else None
+        filtered["days_to_expiry"] = filtered.apply(
+            lambda row: compute_days_to_expiry(
+                row["ticker"],
+                row.get("close_time"),
+            ),
+            axis=1,
         )
         display_cols["days_to_expiry"] = "Days to Expiry"
 

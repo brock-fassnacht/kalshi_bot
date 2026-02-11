@@ -126,10 +126,11 @@ class DashboardDataService:
                 progress=0.2, total_markets=total, is_running=True,
             )
 
-            # Step 2: Pre-filter by OI, sort by OI desc, cap at max_orderbook_fetches
+            # Step 2: Pre-filter by yes_ask and OI, sort by OI desc, cap at max_orderbook_fetches
             after_oi_list = [
                 m for m in all_markets.values()
                 if m.open_interest >= settings.min_oi_prefilter
+                and (m.yes_ask is not None and m.yes_ask >= settings.min_yes_ask_prefilter)
             ]
             after_oi_list.sort(key=lambda m: m.open_interest, reverse=True)
             after_oi_list = after_oi_list[:settings.max_orderbook_fetches]
@@ -246,10 +247,12 @@ class DashboardDataService:
                 filtered_markets=ob_total, is_running=True,
             )
 
-            # Step 5: Filter by near-mid depth
+            # Step 5: Filter by depth requirements
             qualified_tickers = {
                 t for t, s in summaries.items()
                 if s.near_mid_depth_dollars >= settings.min_near_mid_depth_dollars
+                and s.total_yes_depth_dollars >= settings.min_yes_depth_dollars
+                and s.total_no_depth_dollars >= settings.min_no_depth_dollars
             }
 
             # Step 6: Compute price changes
