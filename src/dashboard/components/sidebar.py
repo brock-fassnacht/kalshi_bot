@@ -42,11 +42,16 @@ def render_sidebar(categories: list[str]) -> dict:
             placeholder="All categories",
         )
 
-        min_volume = st.number_input(
-            "Min volume",
-            min_value=0,
-            value=0,
-            step=100,
+        st.subheader("Title Keywords")
+        include_keywords = st.text_input(
+            "Include",
+            placeholder="e.g. bitcoin, fed rate",
+            help="Show only titles containing any of these (comma-separated)",
+        )
+        exclude_keywords = st.text_input(
+            "Exclude",
+            placeholder="e.g. crypto, sports",
+            help="Hide titles containing any of these (comma-separated)",
         )
 
         show_active_only = st.checkbox("Active markets only", value=True)
@@ -73,7 +78,8 @@ def render_sidebar(categories: list[str]) -> dict:
         "refresh_interval": refresh_interval,
         "search": search.strip().lower() if search else "",
         "categories": selected_categories,
-        "min_volume": min_volume,
+        "include_keywords": include_keywords.strip() if include_keywords else "",
+        "exclude_keywords": exclude_keywords.strip() if exclude_keywords else "",
         "show_active_only": show_active_only,
         "min_yes_ask": min_yes_ask,
         "max_days_to_expiry": max_days_to_expiry,

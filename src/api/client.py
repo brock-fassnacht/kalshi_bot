@@ -220,6 +220,38 @@ class KalshiClient:
 
         return all_events
 
+    async def get_all_event_titles(
+        self, status: str = "open", max_pages: int = 20
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """Fetch event_ticker -> title and event_ticker -> category mappings (lightweight)."""
+        titles = {}
+        categories = {}
+        cursor = None
+
+        for page in range(max_pages):
+            params = {"limit": 200, "status": status, "with_nested_markets": "false"}
+            if cursor:
+                params["cursor"] = cursor
+
+            data = await self._request("GET", "/events", params=params)
+
+            for e in data.get("events", []):
+                ticker = e["event_ticker"]
+                titles[ticker] = e.get("title", "")
+                if e.get("category"):
+                    categories[ticker] = e["category"]
+
+            cursor = data.get("cursor")
+            logger.debug(f"Fetched {len(data.get('events', []))} event titles, total: {len(titles)} (page {page + 1})")
+
+            if not cursor or not data.get("events"):
+                break
+
+        if cursor:
+            logger.warning(f"Hit max_pages={max_pages} cap at {len(titles)} event titles")
+
+        return titles, categories
+
     async def get_event(self, event_ticker: str) -> Optional[Event]:
         """Fetch a single event by ticker."""
         data = await self._request("GET", f"/events/{event_ticker}")

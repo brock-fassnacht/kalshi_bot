@@ -239,6 +239,17 @@ class Database:
             )
             return list(result.scalars().all())
 
+    async def get_all_categories(self) -> list[str]:
+        """Return sorted list of distinct non-null categories from all events."""
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(EventSummary.category)
+                .where(EventSummary.category.isnot(None))
+                .distinct()
+                .order_by(EventSummary.category)
+            )
+            return [row[0] for row in result.all() if row[0]]
+
     # ---- Market Snapshots ----
 
     async def save_market_snapshot(

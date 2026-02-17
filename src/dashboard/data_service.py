@@ -96,6 +96,10 @@ class DashboardDataService:
             all_markets = {m.ticker: m for m in all_markets_list}
             total = len(all_markets)
 
+            # Fetch event-level titles and categories (overall question, not sub-market titles)
+            event_titles, event_categories = await client.get_all_event_titles(status="open")
+            logger.info(f"Fetched {len(event_titles)} event titles, {len(event_categories)} with categories")
+
             # Build event summaries from ALL markets (before OI filter)
             event_groups: dict[str, list] = {}
             for m in all_markets.values():
@@ -106,10 +110,12 @@ class DashboardDataService:
             for evt_ticker, markets in event_groups.items():
                 open_times = [m.open_time for m in markets if m.open_time]
                 close_times = [m.close_time for m in markets if m.close_time]
+                # Use event-level title and category if available
+                title = event_titles.get(evt_ticker, markets[0].title)
                 event_records.append({
                     "event_ticker": evt_ticker,
-                    "title": markets[0].title,
-                    "category": markets[0].category,
+                    "title": title,
+                    "category": event_categories.get(evt_ticker),
                     "market_count": len(markets),
                     "total_volume": sum(m.volume for m in markets),
                     "total_oi": sum(m.open_interest for m in markets),
@@ -279,7 +285,7 @@ class DashboardDataService:
                     "event_ticker": m.event_ticker,
                     "title": m.title,
                     "status": m.status.value,
-                    "category": m.category,
+                    "category": event_categories.get(m.event_ticker),
                     "yes_bid": m.yes_bid,
                     "yes_ask": m.yes_ask,
                     "no_bid": m.no_bid,
@@ -419,10 +425,16 @@ class DashboardDataService:
         }
 
     def get_categories(self) -> list[str]:
-        df = self.get_qualified_dataframe()
-        if df.empty or "category" not in df.columns:
-            return []
-        return sorted(df["category"].dropna().unique().tolist())
+        self._ensure_db()
+        db = self._get_db()
+        loop = asyncio.new_event_loop()
+        try:
+            categories = loop.run_until_complete(db.get_all_categories())
+        except Exception:
+            categories = []
+        finally:
+            loop.close()
+        return categories
 
     def fetch_orderbook_detail(self, ticker: str) -> tuple[Optional[OrderbookSummary], Optional[dict]]:
         """Fetch fresh orderbook for detail view (single API call)."""

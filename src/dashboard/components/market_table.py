@@ -26,9 +26,20 @@ def apply_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
     if filters.get("categories"):
         filtered = filtered[filtered["category"].isin(filters["categories"])]
 
-    # Volume filter
-    if filters.get("min_volume", 0) > 0:
-        filtered = filtered[filtered["volume"] >= filters["min_volume"]]
+    # Include keywords - title must contain at least one term
+    if filters.get("include_keywords"):
+        terms = [t.strip().lower() for t in filters["include_keywords"].split(",") if t.strip()]
+        if terms:
+            mask = pd.Series(False, index=filtered.index)
+            for term in terms:
+                mask |= filtered["title"].str.lower().str.contains(term, na=False, regex=False)
+            filtered = filtered[mask]
+
+    # Exclude keywords - hide titles containing any term
+    if filters.get("exclude_keywords"):
+        terms = [t.strip().lower() for t in filters["exclude_keywords"].split(",") if t.strip()]
+        for term in terms:
+            filtered = filtered[~filtered["title"].str.lower().str.contains(term, na=False, regex=False)]
 
     # Active only
     if filters.get("show_active_only"):
@@ -57,6 +68,7 @@ def render_market_table(df: pd.DataFrame, filters: dict) -> str | None:
     display_cols = {
         "ticker": "Ticker",
         "title": "Title",
+        "category": "Category",
         "yes_bid": "Yes Bid",
         "yes_ask": "Yes Ask",
         "spread": "Spread",

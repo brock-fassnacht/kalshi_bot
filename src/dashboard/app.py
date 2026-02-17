@@ -114,6 +114,22 @@ def main():
         from datetime import timedelta
         cutoff = datetime.utcnow() - timedelta(hours=get_settings().new_market_hours)
         new_events_df = service.get_new_events_dataframe(cutoff)
+        # Apply category filter
+        if not new_events_df.empty and filters.get("categories"):
+            new_events_df = new_events_df[new_events_df["category"].isin(filters["categories"])]
+
+        # Apply include/exclude keyword filters on title
+        if not new_events_df.empty and filters.get("include_keywords"):
+            terms = [t.strip().lower() for t in filters["include_keywords"].split(",") if t.strip()]
+            if terms:
+                mask = new_events_df["title"].str.lower().str.contains(terms[0], na=False, regex=False)
+                for term in terms[1:]:
+                    mask |= new_events_df["title"].str.lower().str.contains(term, na=False, regex=False)
+                new_events_df = new_events_df[mask]
+        if not new_events_df.empty and filters.get("exclude_keywords"):
+            terms = [t.strip().lower() for t in filters["exclude_keywords"].split(",") if t.strip()]
+            for term in terms:
+                new_events_df = new_events_df[~new_events_df["title"].str.lower().str.contains(term, na=False, regex=False)]
         # Apply days-to-expiry filter (keep only events expiring within N days)
         if not new_events_df.empty and filters["max_days_to_expiry"] > 0:
             expiry_cutoff = datetime.utcnow() + timedelta(days=filters["max_days_to_expiry"])
@@ -123,7 +139,10 @@ def main():
         render_new_markets(new_events_df)
 
     with tab_movers:
-        render_price_movers(df)
+        movers_df = df.copy()
+        if filters.get("categories"):
+            movers_df = movers_df[movers_df["category"].isin(filters["categories"])]
+        render_price_movers(movers_df)
 
     # Auto-refresh: kick off background worker, then schedule a rerun
     if filters["auto_refresh"] and filters["refresh_interval"]:
