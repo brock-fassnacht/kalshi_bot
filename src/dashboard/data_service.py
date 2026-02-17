@@ -13,7 +13,7 @@ from src.api.client import KalshiClient
 from src.config import Settings
 from src.data.database import Database
 from src.data.orderbook import compute_orderbook_summary
-from src.models import Market, OrderbookSummary
+from src.models import Market, MarketStatus, OrderbookSummary
 
 
 class DashboardDataService:
@@ -134,9 +134,11 @@ class DashboardDataService:
             )
 
             # Step 2: Pre-filter by yes_ask and OI, sort by OI desc, cap at max_orderbook_fetches
+            resolved = {MarketStatus.SETTLED, MarketStatus.FINALIZED, MarketStatus.CLOSED}
             after_oi_list = [
                 m for m in all_markets.values()
-                if m.open_interest >= settings.min_oi_prefilter
+                if m.status not in resolved
+                and m.open_interest >= settings.min_oi_prefilter
                 and (m.yes_ask is not None and m.yes_ask >= settings.min_yes_ask_prefilter)
             ]
             after_oi_list.sort(key=lambda m: m.open_interest, reverse=True)

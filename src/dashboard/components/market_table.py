@@ -13,6 +13,10 @@ def apply_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
 
     filtered = df.copy()
 
+    # Always exclude resolved markets
+    if "status" in filtered.columns:
+        filtered = filtered[~filtered["status"].isin(["settled", "finalized", "closed"])]
+
     # Search filter
     if filters.get("search"):
         search = filters["search"]
