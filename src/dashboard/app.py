@@ -149,7 +149,7 @@ def main():
     st.divider()
     st.caption(
         f"**Market filter thresholds** — "
-        f"Markets scanned: up to {s.max_market_pages * 200:,} ({s.max_market_pages} pages × 200) · "
+        f"Markets scanned: up to {getattr(s, 'max_market_pages', 50) * 200:,} ({getattr(s, 'max_market_pages', 50)} pages × 200) · "
         f"Min expiry: {s.min_expiry_hours}h · "
         f"Min OI: {s.min_oi_prefilter:,} · "
         f"Min Yes Ask: {s.min_yes_ask_prefilter}¢ · "
