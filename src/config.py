@@ -37,7 +37,8 @@ class Settings(BaseSettings):
     min_no_depth_dollars: float = 5000  # Min $ depth on NO side
     min_yes_ask_prefilter: int = 5  # Exclude markets with yes_ask below this (cents)
     min_oi_prefilter: int = 500  # Basic OI pre-filter before fetching orderbooks
-    max_orderbook_fetches: int = 1000  # Cap on how many orderbooks to fetch per refresh
+    max_market_pages: int = 50        # Pages of markets to scan (200/page = 10,000 max)
+    max_orderbook_fetches: int = 5000  # Cap on how many orderbooks to fetch per refresh
     orderbook_concurrency: int = 10  # Max concurrent orderbook API requests
 
     @property

@@ -92,6 +92,7 @@ class DashboardDataService:
             all_markets_list = await client.get_all_markets(
                 status="open",
                 min_close_ts=min_close_ts,
+                max_pages=settings.max_market_pages,
             )
             all_markets = {m.ticker: m for m in all_markets_list}
             total = len(all_markets)

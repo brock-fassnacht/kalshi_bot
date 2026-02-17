@@ -144,6 +144,21 @@ def main():
             movers_df = movers_df[movers_df["category"].isin(filters["categories"])]
         render_price_movers(movers_df)
 
+    # Filter thresholds legend
+    s = get_settings()
+    st.divider()
+    st.caption(
+        f"**Market filter thresholds** — "
+        f"Markets scanned: up to {s.max_market_pages * 200:,} ({s.max_market_pages} pages × 200) · "
+        f"Min expiry: {s.min_expiry_hours}h · "
+        f"Min OI: {s.min_oi_prefilter:,} · "
+        f"Min Yes Ask: {s.min_yes_ask_prefilter}¢ · "
+        f"Max orderbook fetches: {s.max_orderbook_fetches:,} · "
+        f"Min near-mid depth: ${s.min_near_mid_depth_dollars:,.0f} (±{s.near_mid_range_cents}¢ of mid) · "
+        f"Min YES depth: ${s.min_yes_depth_dollars:,.0f} · "
+        f"Min NO depth: ${s.min_no_depth_dollars:,.0f}"
+    )
+
     # Auto-refresh: kick off background worker, then schedule a rerun
     if filters["auto_refresh"] and filters["refresh_interval"]:
         if status and status.get("updated_at"):
