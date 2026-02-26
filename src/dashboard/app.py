@@ -31,17 +31,27 @@ def get_service() -> DashboardDataService:
     return st.session_state.service
 
 
+def _load_data(service: DashboardDataService):
+    """Load data from DB into session state."""
+    from datetime import timedelta
+    st.session_state.df = service.get_qualified_dataframe()
+    st.session_state.categories = service.get_categories()
+    st.session_state.worker_status = service.get_worker_status()
+    cutoff = datetime.utcnow() - timedelta(hours=get_settings().new_market_hours)
+    st.session_state.new_events_df = service.get_new_events_dataframe(cutoff)
+
+
 def main():
     service = get_service()
 
     # Auto-start first refresh if DB is empty
-    df = service.get_qualified_dataframe()
-    if df.empty and not service.is_refreshing():
+    if "df" not in st.session_state:
+        _load_data(service)
+    if st.session_state.df.empty and not service.is_refreshing():
         service.start_refresh()
 
     # Sidebar
-    categories = service.get_categories()
-    filters = render_sidebar(categories)
+    filters = render_sidebar(st.session_state.categories)
 
     # Handle manual refresh
     if filters["refresh_clicked"] and not service.is_refreshing():
@@ -55,17 +65,17 @@ def main():
             st.progress(status["progress"], text=status["message"])
             time.sleep(1)
             st.rerun()
+        else:
+            # Refresh just finished — reload data from DB
+            _load_data(service)
 
     # Check for errors
-    status = service.get_worker_status()
+    status = st.session_state.worker_status
     if status and status["stage"] == "error":
         st.error(f"Refresh failed: {status['message']}")
 
-    # Load data
-    df = service.get_qualified_dataframe()
-
-    # Show status
-    status = service.get_worker_status()
+    df = st.session_state.df
+    status = st.session_state.worker_status
 
     if df.empty:
         st.warning("No markets in database yet. Click 'Refresh Now' to start.")
@@ -112,8 +122,10 @@ def main():
 
     with tab_new:
         from datetime import timedelta
-        cutoff = datetime.utcnow() - timedelta(hours=get_settings().new_market_hours)
-        new_events_df = service.get_new_events_dataframe(cutoff)
+        if "new_events_df" not in st.session_state:
+            cutoff = datetime.utcnow() - timedelta(hours=get_settings().new_market_hours)
+            st.session_state.new_events_df = service.get_new_events_dataframe(cutoff)
+        new_events_df = st.session_state.new_events_df
         # Apply category filter
         if not new_events_df.empty and filters.get("categories"):
             new_events_df = new_events_df[new_events_df["category"].isin(filters["categories"])]
@@ -165,8 +177,11 @@ def main():
             elapsed = (datetime.utcnow() - status["updated_at"]).total_seconds()
             if elapsed >= filters["refresh_interval"] and not service.is_refreshing():
                 service.start_refresh()
-        time.sleep(filters["refresh_interval"])
-        st.rerun()
+                st.rerun()
+        # Poll while a refresh is in progress so we pick up the result
+        if service.is_refreshing():
+            time.sleep(2)
+            st.rerun()
 
 
 # Need this import at module level for the auto-refresh datetime check

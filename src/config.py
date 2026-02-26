@@ -1,8 +1,23 @@
 """Configuration management for Kalshi market dashboard."""
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _inject_streamlit_secrets():
+    """Bridge Streamlit Cloud secrets into env vars for pydantic-settings."""
+    try:
+        import streamlit as st
+        for key, value in st.secrets.items():
+            if isinstance(value, str) and key.upper() not in os.environ:
+                os.environ[key.upper()] = value
+    except Exception:
+        pass
+
+
+_inject_streamlit_secrets()
 
 
 class Settings(BaseSettings):
@@ -17,6 +32,7 @@ class Settings(BaseSettings):
     # Kalshi API
     kalshi_api_key: str
     kalshi_private_key_path: Path = Path("./keys/kalshi_private_key.pem")
+    kalshi_private_key: str = ""  # Direct PEM string (for cloud deployment)
     kalshi_base_url: str = "https://demo-api.kalshi.co/trade-api/v2"
 
     # Database
@@ -43,7 +59,10 @@ class Settings(BaseSettings):
 
     @property
     def private_key(self) -> str:
-        """Load private key from file."""
+        """Load private key from env var string, or fall back to file."""
+        if self.kalshi_private_key:
+            # Handle literal \n from env vars / Streamlit secrets
+            return self.kalshi_private_key.replace("\\n", "\n")
         return self.kalshi_private_key_path.read_text()
 
 

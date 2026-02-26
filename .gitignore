@@ -43,8 +43,8 @@ keys/
 *.pem
 *.key
 
-# Data
-data/
+# Data (SQLite DB directory at project root only)
+/data/
 *.db
 *.sqlite
 
@@ -58,3 +58,4 @@ Thumbs.db
 
 # Project specific
 .claude/
+nul

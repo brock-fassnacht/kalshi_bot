@@ -1,6 +1,7 @@
 """Database management for market data persistence."""
 
 import json
+import os
 from datetime import datetime
 from typing import Optional
 
@@ -146,6 +147,11 @@ class Database:
 
     def __init__(self, settings: Settings):
         self.settings = settings
+        # Ensure the SQLite directory exists (needed on cloud deploys)
+        db_url = settings.database_url
+        if "sqlite" in db_url:
+            db_path = db_url.split("///")[-1]
+            os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self.engine = create_async_engine(
             settings.database_url,
             echo=False,

@@ -1,5 +1,6 @@
 """Async HTTP client for Kalshi API."""
 
+import asyncio
 from datetime import datetime
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -21,7 +22,7 @@ class KalshiClient:
         self._client: Optional[httpx.AsyncClient] = None
 
     async def __aenter__(self) -> "KalshiClient":
-        self._client = httpx.AsyncClient(timeout=60.0)
+        self._client = httpx.AsyncClient(timeout=180.0)
         return self
 
     async def __aexit__(self, *args) -> None:
@@ -63,31 +64,54 @@ class KalshiClient:
         path: str,
         params: Optional[dict] = None,
         json: Optional[dict] = None,
+        _max_retries: int = 3,
     ) -> dict[str, Any]:
-        """Make an authenticated API request."""
+        """Make an authenticated API request with retry on rate limit / server errors."""
         if not self._client:
             raise RuntimeError("Client not initialized. Use async context manager.")
 
-        # Build full URL
         url = f"{self.base_url}{path}"
 
-        # Get headers (signing uses path without query params)
-        headers = self._get_headers(method, path)
+        for attempt in range(_max_retries + 1):
+            # Re-sign on every attempt (timestamp may differ)
+            headers = self._get_headers(method, path)
 
-        logger.debug(f"Request: {method} {url}")
+            logger.debug(f"Request: {method} {url} (attempt {attempt + 1})")
 
-        response = await self._client.request(
-            method=method,
-            url=url,
-            headers=headers,
-            params=params,
-            json=json,
-        )
+            try:
+                response = await self._client.request(
+                    method=method,
+                    url=url,
+                    headers=headers,
+                    params=params,
+                    json=json,
+                )
+            except httpx.ReadTimeout:
+                if attempt < _max_retries:
+                    wait = 2 ** attempt
+                    logger.warning(f"Timeout on {method} {path}, retrying in {wait}s...")
+                    await asyncio.sleep(wait)
+                    continue
+                raise
 
-        if response.status_code >= 400:
-            logger.error(f"API error {response.status_code}: {response.text}")
-            response.raise_for_status()
+            if response.status_code == 429 or response.status_code >= 500:
+                if attempt < _max_retries:
+                    retry_after = response.headers.get("Retry-After")
+                    wait = float(retry_after) if retry_after else 2 ** attempt
+                    logger.warning(
+                        f"HTTP {response.status_code} on {path}, retrying in {wait}s..."
+                    )
+                    await asyncio.sleep(wait)
+                    continue
 
+            if response.status_code >= 400:
+                logger.error(f"API error {response.status_code}: {response.text}")
+                response.raise_for_status()
+
+            return response.json()
+
+        # Should not reach here, but just in case
+        response.raise_for_status()
         return response.json()
 
     # -------------------------------------------------------------------------
