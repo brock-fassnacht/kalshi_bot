@@ -6,20 +6,6 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-def _inject_streamlit_secrets():
-    """Bridge Streamlit Cloud secrets into env vars for pydantic-settings."""
-    try:
-        import streamlit as st
-        for key, value in st.secrets.items():
-            if isinstance(value, str):
-                os.environ[key.upper()] = value
-    except Exception:
-        pass
-
-
-_inject_streamlit_secrets()
-
-
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -66,9 +52,23 @@ class Settings(BaseSettings):
         return self.kalshi_private_key_path.read_text()
 
 
+def _read_streamlit_secrets() -> dict:
+    """Read Streamlit Cloud secrets as a dict for Settings overrides."""
+    try:
+        import streamlit as st
+        overrides = {}
+        for key, value in st.secrets.items():
+            if isinstance(value, str):
+                overrides[key.lower()] = value
+        return overrides
+    except Exception:
+        return {}
+
+
 @lru_cache()
 def get_settings() -> Settings:
-    """Get cached settings instance."""
-    s = Settings()
+    """Get cached settings instance, with Streamlit secrets taking priority."""
+    overrides = _read_streamlit_secrets()
+    s = Settings(**overrides)
     print(f"[CONFIG] base_url={s.kalshi_base_url}")
     return s
