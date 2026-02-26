@@ -56,9 +56,10 @@ def _read_streamlit_secrets() -> dict:
     """Read Streamlit Cloud secrets as a dict for Settings overrides."""
     try:
         import streamlit as st
+        fields = set(Settings.model_fields.keys())
         overrides = {}
         for key, value in st.secrets.items():
-            if isinstance(value, str):
+            if isinstance(value, str) and key.lower() in fields:
                 overrides[key.lower()] = value
         return overrides
     except Exception:
