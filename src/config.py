@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=".env" if os.path.exists(".env") else None,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -69,4 +69,6 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings() -> Settings:
     """Get cached settings instance."""
-    return Settings()
+    s = Settings()
+    print(f"[CONFIG] base_url={s.kalshi_base_url}")
+    return s
