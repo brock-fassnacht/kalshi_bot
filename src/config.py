@@ -11,7 +11,7 @@ def _inject_streamlit_secrets():
     try:
         import streamlit as st
         for key, value in st.secrets.items():
-            if isinstance(value, str) and key.upper() not in os.environ:
+            if isinstance(value, str):
                 os.environ[key.upper()] = value
     except Exception:
         pass
