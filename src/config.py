@@ -1,7 +1,6 @@
 """Configuration management for Kalshi market dashboard."""
 
 import os
-from functools import lru_cache
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -66,10 +65,14 @@ def _read_streamlit_secrets() -> dict:
         return {}
 
 
-@lru_cache()
+_settings_instance = None
+
+
 def get_settings() -> Settings:
-    """Get cached settings instance, with Streamlit secrets taking priority."""
-    overrides = _read_streamlit_secrets()
-    s = Settings(**overrides)
-    print(f"[CONFIG] base_url={s.kalshi_base_url}")
-    return s
+    """Get settings instance, with Streamlit secrets taking priority."""
+    global _settings_instance
+    if _settings_instance is None:
+        overrides = _read_streamlit_secrets()
+        _settings_instance = Settings(**overrides)
+        print(f"[CONFIG] base_url={_settings_instance.kalshi_base_url}")
+    return _settings_instance
