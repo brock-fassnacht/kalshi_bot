@@ -22,7 +22,7 @@ def render_sidebar(categories: list[str]) -> dict:
                 "Refresh interval (seconds)",
                 min_value=30,
                 max_value=300,
-                value=60,
+                value=300,
                 step=10,
             )
         else:
@@ -50,7 +50,7 @@ def render_sidebar(categories: list[str]) -> dict:
         )
         exclude_keywords = st.text_input(
             "Exclude",
-            placeholder="e.g. crypto, sports",
+            value="crypto, elections, sports, entertainment",
             help="Hide titles containing any of these (comma-separated)",
         )
 

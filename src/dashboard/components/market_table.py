@@ -112,8 +112,10 @@ def render_market_table(df: pd.DataFrame, filters: dict) -> str | None:
     display_df = filtered[available_cols].copy()
     display_df.columns = [display_cols[c] for c in available_cols]
 
-    # Sort by volume descending by default
-    if "Volume" in display_df.columns:
+    # Sort by open time descending by default (newest first)
+    if "Opened" in display_df.columns:
+        display_df = display_df.sort_values("Opened", ascending=False)
+    elif "Volume" in display_df.columns:
         display_df = display_df.sort_values("Volume", ascending=False)
 
     st.caption(f"Showing {len(display_df)} of {len(df)} markets")
