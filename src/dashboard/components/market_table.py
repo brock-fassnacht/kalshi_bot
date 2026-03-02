@@ -30,6 +30,10 @@ def apply_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
     if filters.get("categories"):
         filtered = filtered[filtered["category"].isin(filters["categories"])]
 
+    # Exclude categories filter
+    if filters.get("excluded_categories"):
+        filtered = filtered[~filtered["category"].isin(filters["excluded_categories"])]
+
     # Include keywords - title must contain at least one term
     if filters.get("include_keywords"):
         terms = [t.strip().lower() for t in filters["include_keywords"].split(",") if t.strip()]

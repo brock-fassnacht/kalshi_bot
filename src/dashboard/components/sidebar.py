@@ -42,6 +42,15 @@ def render_sidebar(categories: list[str]) -> dict:
             placeholder="All categories",
         )
 
+        excluded_names = {"crypto", "elections", "sports", "entertainment"}
+        default_excluded = [c for c in categories if c.lower() in excluded_names]
+        excluded_categories = st.multiselect(
+            "Exclude Categories",
+            options=categories,
+            default=default_excluded,
+            placeholder="None",
+        )
+
         st.subheader("Title Keywords")
         include_keywords = st.text_input(
             "Include",
@@ -78,6 +87,7 @@ def render_sidebar(categories: list[str]) -> dict:
         "refresh_interval": refresh_interval,
         "search": search.strip().lower() if search else "",
         "categories": selected_categories,
+        "excluded_categories": excluded_categories,
         "include_keywords": include_keywords.strip() if include_keywords else "",
         "exclude_keywords": exclude_keywords.strip() if exclude_keywords else "",
         "show_active_only": show_active_only,
