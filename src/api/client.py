@@ -340,19 +340,17 @@ class KalshiClient:
         batch_size = 100
         for i in range(0, len(tickers), batch_size):
             batch = tickers[i : i + batch_size]
-            # Put market_tickers directly in URL to avoid httpx encoding commas as %2C
+            # Build full query string in the path to avoid httpx encoding commas
+            # as %2C and to prevent httpx from dropping inline query params when
+            # a params dict is also provided.
             tickers_str = ",".join(batch)
-            params = {
-                "start_ts": start_ts,
-                "end_ts": end_ts,
-                "period_interval": period_interval,
-            }
+            path = (
+                f"/markets/candlesticks?market_tickers={tickers_str}"
+                f"&start_ts={start_ts}&end_ts={end_ts}"
+                f"&period_interval={period_interval}"
+            )
             try:
-                data = await self._request(
-                    "GET",
-                    f"/markets/candlesticks?market_tickers={tickers_str}",
-                    params=params,
-                )
+                data = await self._request("GET", path)
                 for market_data in data.get("markets", []):
                     ticker = market_data.get("market_ticker", "")
                     result[ticker] = market_data.get("candlesticks", [])
