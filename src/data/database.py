@@ -15,6 +15,7 @@ from sqlalchemy import (
     Text,
     delete,
     select,
+    text as sqlalchemy_text,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
@@ -77,8 +78,12 @@ class QualifiedMarket(Base):
     total_no_depth = Column(Float, default=0.0)
     near_mid_depth = Column(Float, default=0.0)
 
-    # Price change
+    # Price changes (cents) at multiple intervals
+    price_change_10m = Column(Float)
+    price_change_30m = Column(Float)
+    price_change_1h = Column(Float)
     price_change_24h = Column(Float)
+    price_change_1w = Column(Float)
 
     updated_at = Column(DateTime, nullable=False, index=True)
 
@@ -163,9 +168,17 @@ class Database:
         )
 
     async def init_db(self) -> None:
-        """Create all tables."""
+        """Create all tables and add any missing columns."""
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # Migrate: add new price change columns if missing
+            for col in ("price_change_10m", "price_change_30m", "price_change_1h", "price_change_1w"):
+                try:
+                    await conn.execute(
+                        sqlalchemy_text(f"ALTER TABLE qualified_markets ADD COLUMN {col} FLOAT")
+                    )
+                except Exception:
+                    pass  # Column already exists
         logger.info("Database initialized")
 
     # ---- Worker Status ----
@@ -305,6 +318,28 @@ class Database:
             if s.ticker not in oldest:
                 oldest[s.ticker] = s
         return oldest
+
+    async def get_oldest_snapshots_multi_interval(
+        self, intervals: dict[str, datetime]
+    ) -> dict[str, dict[str, MarketSnapshot]]:
+        """Get oldest snapshot per ticker for multiple lookback intervals.
+
+        Args:
+            intervals: mapping of label -> cutoff datetime, e.g. {"10m": dt, "1h": dt}
+
+        Returns:
+            {label: {ticker: MarketSnapshot}} for each interval.
+        """
+        # Find the earliest cutoff to fetch all needed snapshots in one query
+        earliest = min(intervals.values())
+        all_snapshots = await self.get_snapshots_since(earliest)
+
+        result: dict[str, dict[str, MarketSnapshot]] = {label: {} for label in intervals}
+        for label, cutoff in intervals.items():
+            for s in all_snapshots:
+                if s.fetched_at >= cutoff and s.ticker not in result[label]:
+                    result[label][s.ticker] = s
+        return result
 
     # ---- Orderbook Cache ----
 

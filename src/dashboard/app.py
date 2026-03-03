@@ -14,8 +14,6 @@ from src.config import get_settings
 from src.dashboard.data_service import DashboardDataService
 from src.dashboard.components.sidebar import render_sidebar
 from src.dashboard.components.market_table import render_market_table
-from src.dashboard.components.new_markets import render_new_markets
-from src.dashboard.components.price_movers import render_price_movers
 from src.dashboard.components.orderbook_detail import render_orderbook_detail
 
 st.set_page_config(
@@ -33,12 +31,9 @@ def get_service() -> DashboardDataService:
 
 def _load_data(service: DashboardDataService):
     """Load data from DB into session state."""
-    from datetime import timedelta
     st.session_state.df = service.get_qualified_dataframe()
     st.session_state.categories = service.get_categories()
     st.session_state.worker_status = service.get_worker_status()
-    cutoff = datetime.utcnow() - timedelta(hours=get_settings().new_market_hours)
-    st.session_state.new_events_df = service.get_new_events_dataframe(cutoff)
 
 
 def main():
@@ -102,59 +97,20 @@ def main():
     if status and status.get("updated_at"):
         st.caption(f"Last refreshed: {status['updated_at'].strftime('%Y-%m-%d %H:%M:%S')} UTC")
 
-    # Tabs
-    tab_all, tab_new, tab_movers = st.tabs(["All Markets", "New Markets", "Price Movers"])
+    # Market table
+    selected_ticker = render_market_table(df, filters)
 
-    with tab_all:
-        selected_ticker = render_market_table(df, filters)
-
-        if selected_ticker:
-            st.divider()
-            with st.spinner(f"Loading orderbook for {selected_ticker}..."):
-                try:
-                    summary, raw_ob = service.fetch_orderbook_detail(selected_ticker)
-                    if summary and raw_ob:
-                        render_orderbook_detail(summary, raw_ob)
-                    else:
-                        st.warning("No orderbook data available.")
-                except Exception as e:
-                    st.error(f"Failed to fetch orderbook: {e}")
-
-    with tab_new:
-        from datetime import timedelta
-        if "new_events_df" not in st.session_state:
-            cutoff = datetime.utcnow() - timedelta(hours=get_settings().new_market_hours)
-            st.session_state.new_events_df = service.get_new_events_dataframe(cutoff)
-        new_events_df = st.session_state.new_events_df
-        # Apply category filter
-        if not new_events_df.empty and filters.get("categories"):
-            new_events_df = new_events_df[new_events_df["category"].isin(filters["categories"])]
-
-        # Apply include/exclude keyword filters on title
-        if not new_events_df.empty and filters.get("include_keywords"):
-            terms = [t.strip().lower() for t in filters["include_keywords"].split(",") if t.strip()]
-            if terms:
-                mask = new_events_df["title"].str.lower().str.contains(terms[0], na=False, regex=False)
-                for term in terms[1:]:
-                    mask |= new_events_df["title"].str.lower().str.contains(term, na=False, regex=False)
-                new_events_df = new_events_df[mask]
-        if not new_events_df.empty and filters.get("exclude_keywords"):
-            terms = [t.strip().lower() for t in filters["exclude_keywords"].split(",") if t.strip()]
-            for term in terms:
-                new_events_df = new_events_df[~new_events_df["title"].str.lower().str.contains(term, na=False, regex=False)]
-        # Apply days-to-expiry filter (keep only events expiring within N days)
-        if not new_events_df.empty and filters["max_days_to_expiry"] > 0:
-            expiry_cutoff = datetime.utcnow() + timedelta(days=filters["max_days_to_expiry"])
-            new_events_df = new_events_df[
-                new_events_df["close_time"].notna() & (new_events_df["close_time"] <= expiry_cutoff)
-            ]
-        render_new_markets(new_events_df)
-
-    with tab_movers:
-        movers_df = df.copy()
-        if filters.get("categories"):
-            movers_df = movers_df[movers_df["category"].isin(filters["categories"])]
-        render_price_movers(movers_df)
+    if selected_ticker:
+        st.divider()
+        with st.spinner(f"Loading orderbook for {selected_ticker}..."):
+            try:
+                summary, raw_ob = service.fetch_orderbook_detail(selected_ticker)
+                if summary and raw_ob:
+                    render_orderbook_detail(summary, raw_ob)
+                else:
+                    st.warning("No orderbook data available.")
+            except Exception as e:
+                st.error(f"Failed to fetch orderbook: {e}")
 
     # Filter thresholds legend
     s = get_settings()
@@ -186,7 +142,6 @@ def main():
 
 # Need this import at module level for the auto-refresh datetime check
 from datetime import datetime
-import pandas as pd
 
 if __name__ == "__main__":
     main()

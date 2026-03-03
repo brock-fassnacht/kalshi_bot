@@ -264,9 +264,16 @@ class DashboardDataService:
                 and s.total_no_depth_dollars >= settings.min_no_depth_dollars
             }
 
-            # Step 6: Compute price changes
-            lookback = datetime.utcnow() - timedelta(hours=settings.price_change_lookback_hours)
-            old_snapshots = await db.get_oldest_snapshots_per_ticker(lookback)
+            # Step 6: Compute price changes at multiple intervals
+            now_pc = datetime.utcnow()
+            intervals = {
+                "10m": now_pc - timedelta(minutes=10),
+                "30m": now_pc - timedelta(minutes=30),
+                "1h": now_pc - timedelta(hours=1),
+                "24h": now_pc - timedelta(hours=24),
+                "1w": now_pc - timedelta(weeks=1),
+            }
+            multi_snapshots = await db.get_oldest_snapshots_multi_interval(intervals)
 
             # Step 7: Build qualified market records and write to DB
             now = datetime.utcnow()
@@ -277,11 +284,12 @@ class DashboardDataService:
                 m = after_oi[ticker]
                 s = summaries[ticker]
 
-                # Price change
-                old = old_snapshots.get(ticker)
-                price_change = None
-                if old and old.yes_bid is not None and m.yes_bid is not None:
-                    price_change = float(m.yes_bid - old.yes_bid)
+                # Price changes at multiple intervals
+                def _price_change(label):
+                    old = multi_snapshots[label].get(ticker)
+                    if old and old.yes_bid is not None and m.yes_bid is not None:
+                        return float(m.yes_bid - old.yes_bid)
+                    return None
 
                 records.append({
                     "ticker": m.ticker,
@@ -303,7 +311,11 @@ class DashboardDataService:
                     "total_yes_depth": s.total_yes_depth_dollars,
                     "total_no_depth": s.total_no_depth_dollars,
                     "near_mid_depth": s.near_mid_depth_dollars,
-                    "price_change_24h": price_change,
+                    "price_change_10m": _price_change("10m"),
+                    "price_change_30m": _price_change("30m"),
+                    "price_change_1h": _price_change("1h"),
+                    "price_change_24h": _price_change("24h"),
+                    "price_change_1w": _price_change("1w"),
                     "updated_at": now,
                 })
 
@@ -373,7 +385,11 @@ class DashboardDataService:
                 "total_yes_depth": r.total_yes_depth,
                 "total_no_depth": r.total_no_depth,
                 "near_mid_depth": r.near_mid_depth,
+                "price_change_10m": r.price_change_10m,
+                "price_change_30m": r.price_change_30m,
+                "price_change_1h": r.price_change_1h,
                 "price_change_24h": r.price_change_24h,
+                "price_change_1w": r.price_change_1w,
                 "updated_at": r.updated_at,
             })
 
