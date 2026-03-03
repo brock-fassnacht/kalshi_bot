@@ -26,8 +26,9 @@ def _compute_candlestick_change(
     """
     if not candlesticks or current_yes_bid is None:
         return None
-    # Candlesticks are ordered by time; take the oldest one's open price
-    oldest = candlesticks[0]
+    # Sort by end_period_ts ascending and take the oldest candle
+    sorted_candles = sorted(candlesticks, key=lambda c: c.get("end_period_ts", 0))
+    oldest = sorted_candles[0]
     # Try yes_bid.open first, fall back to price.open
     open_price = None
     yes_bid_data = oldest.get("yes_bid")
