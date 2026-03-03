@@ -308,37 +308,47 @@ class DashboardDataService:
             }
 
             # Step 6: Compute price changes
-            # Use candlestick API for 10m, 1h, 24h (instant, no local history needed)
-            # Use local snapshots for 1w and 1mo (need accumulated data)
+            # Try candlestick API for 10m, 1h, 24h (instant data, no local history needed)
+            # Fall back to local snapshots if candlesticks unavailable
+            # Always use local snapshots for 1w and 1mo
             now_pc = datetime.utcnow()
             now_ts = int(now_pc.timestamp())
             qualified_list = list(qualified_tickers)
 
             # Fetch candlesticks for 10m, 1h, 24h in parallel
-            candle_10m = {}
-            candle_1h = {}
-            candle_24h = {}
+            candle_10m: dict[str, list] = {}
+            candle_1h: dict[str, list] = {}
+            candle_24h: dict[str, list] = {}
 
-            async def _fetch_candles(tickers, start_ts, end_ts, interval):
+            async def _fetch_candles(label, tickers, start_ts, end_ts, interval):
                 try:
-                    return await client.get_market_candlesticks(
+                    result = await client.get_market_candlesticks(
                         tickers=tickers,
                         start_ts=start_ts,
                         end_ts=end_ts,
                         period_interval=interval,
                     )
+                    has_data = sum(1 for v in result.values() if v)
+                    logger.info(
+                        f"Candlestick {label}: {has_data}/{len(result)} tickers with data "
+                        f"(requested {len(tickers)})"
+                    )
+                    return result
                 except Exception as e:
-                    logger.warning(f"Candlestick fetch failed (interval={interval}): {e}")
+                    logger.warning(f"Candlestick fetch failed ({label}, interval={interval}): {e}")
                     return {}
 
             candle_10m, candle_1h, candle_24h = await asyncio.gather(
-                _fetch_candles(qualified_list, now_ts - 600, now_ts, 1),
-                _fetch_candles(qualified_list, now_ts - 3600, now_ts, 60),
-                _fetch_candles(qualified_list, now_ts - 86400, now_ts, 60),
+                _fetch_candles("10m", qualified_list, now_ts - 600, now_ts, 1),
+                _fetch_candles("1h", qualified_list, now_ts - 3600, now_ts, 1),
+                _fetch_candles("24h", qualified_list, now_ts - 86400, now_ts, 60),
             )
 
-            # Use local snapshots for 1w and 1mo
+            # Snapshot-based fallback for all intervals
             snapshot_intervals = {
+                "10m": now_pc - timedelta(minutes=10),
+                "1h": now_pc - timedelta(hours=1),
+                "24h": now_pc - timedelta(hours=24),
                 "1w": now_pc - timedelta(weeks=1),
                 "1mo": now_pc - timedelta(days=30),
             }
@@ -353,17 +363,24 @@ class DashboardDataService:
                 m = after_oi[ticker]
                 s = summaries[ticker]
 
-                # Candlestick-based price changes (10m, 1h, 24h)
-                pc_10m = _compute_candlestick_change(candle_10m.get(ticker, []), m.yes_bid)
-                pc_1h = _compute_candlestick_change(candle_1h.get(ticker, []), m.yes_bid)
-                pc_24h = _compute_candlestick_change(candle_24h.get(ticker, []), m.yes_bid)
-
-                # Snapshot-based price changes (1w, 1mo)
                 def _snapshot_change(label):
                     old = multi_snapshots[label].get(ticker)
                     if old and old.yes_bid is not None and m.yes_bid is not None:
                         return float(m.yes_bid - old.yes_bid)
                     return None
+
+                # Candlestick-based price changes, with snapshot fallback
+                pc_10m = _compute_candlestick_change(candle_10m.get(ticker, []), m.yes_bid)
+                if pc_10m is None:
+                    pc_10m = _snapshot_change("10m")
+
+                pc_1h = _compute_candlestick_change(candle_1h.get(ticker, []), m.yes_bid)
+                if pc_1h is None:
+                    pc_1h = _snapshot_change("1h")
+
+                pc_24h = _compute_candlestick_change(candle_24h.get(ticker, []), m.yes_bid)
+                if pc_24h is None:
+                    pc_24h = _snapshot_change("24h")
 
                 records.append({
                     "ticker": m.ticker,
