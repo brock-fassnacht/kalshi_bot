@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     max_market_pages: int = 50        # Pages of markets to scan (200/page = 10,000 max)
     max_orderbook_fetches: int = 5000  # Cap on how many orderbooks to fetch per refresh
     orderbook_concurrency: int = 10  # Max concurrent orderbook API requests
+    excluded_categories: list[str] = ["Crypto", "Sports", "Elections"]  # Skip these categories during fetch
 
     @property
     def private_key(self) -> str:

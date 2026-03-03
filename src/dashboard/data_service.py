@@ -16,6 +16,32 @@ from src.data.orderbook import compute_orderbook_summary
 from src.models import Market, MarketStatus, OrderbookSummary
 
 
+def _compute_candlestick_change(
+    candlesticks: list[dict],
+    current_yes_bid: Optional[int],
+) -> Optional[float]:
+    """Compute price change from oldest candlestick open to current yes_bid.
+
+    Returns change in cents, or None if data is insufficient.
+    """
+    if not candlesticks or current_yes_bid is None:
+        return None
+    # Candlesticks are ordered by time; take the oldest one's open price
+    oldest = candlesticks[0]
+    # Try yes_bid.open first, fall back to price.open
+    open_price = None
+    yes_bid_data = oldest.get("yes_bid")
+    if yes_bid_data and isinstance(yes_bid_data, dict):
+        open_price = yes_bid_data.get("open")
+    if open_price is None:
+        price_data = oldest.get("price")
+        if price_data and isinstance(price_data, dict):
+            open_price = price_data.get("open")
+    if open_price is None:
+        return None
+    return float(current_yes_bid - open_price)
+
+
 class DashboardDataService:
     """
     Background worker fetches data -> writes to DB.
@@ -100,6 +126,23 @@ class DashboardDataService:
             # Fetch event-level titles and categories (overall question, not sub-market titles)
             event_titles, event_categories = await client.get_all_event_titles(status="open")
             logger.info(f"Fetched {len(event_titles)} event titles, {len(event_categories)} with categories")
+
+            # Filter out excluded categories early to save API calls
+            excluded = set(settings.excluded_categories)
+            if excluded:
+                excluded_event_tickers = {
+                    et for et, cat in event_categories.items() if cat in excluded
+                }
+                before_filter = len(all_markets)
+                all_markets = {
+                    t: m for t, m in all_markets.items()
+                    if m.event_ticker not in excluded_event_tickers
+                }
+                total = len(all_markets)
+                logger.info(
+                    f"Category exclusion: {before_filter} -> {total} markets "
+                    f"(removed {before_filter - total} in {excluded})"
+                )
 
             # Build event summaries from ALL markets (before OI filter)
             event_groups: dict[str, list] = {}
@@ -264,16 +307,42 @@ class DashboardDataService:
                 and s.total_no_depth_dollars >= settings.min_no_depth_dollars
             }
 
-            # Step 6: Compute price changes at multiple intervals
+            # Step 6: Compute price changes
+            # Use candlestick API for 10m, 1h, 24h (instant, no local history needed)
+            # Use local snapshots for 1w and 1mo (need accumulated data)
             now_pc = datetime.utcnow()
-            intervals = {
-                "10m": now_pc - timedelta(minutes=10),
-                "30m": now_pc - timedelta(minutes=30),
-                "1h": now_pc - timedelta(hours=1),
-                "24h": now_pc - timedelta(hours=24),
+            now_ts = int(now_pc.timestamp())
+            qualified_list = list(qualified_tickers)
+
+            # Fetch candlesticks for 10m, 1h, 24h in parallel
+            candle_10m = {}
+            candle_1h = {}
+            candle_24h = {}
+
+            async def _fetch_candles(tickers, start_ts, end_ts, interval):
+                try:
+                    return await client.get_market_candlesticks(
+                        tickers=tickers,
+                        start_ts=start_ts,
+                        end_ts=end_ts,
+                        period_interval=interval,
+                    )
+                except Exception as e:
+                    logger.warning(f"Candlestick fetch failed (interval={interval}): {e}")
+                    return {}
+
+            candle_10m, candle_1h, candle_24h = await asyncio.gather(
+                _fetch_candles(qualified_list, now_ts - 600, now_ts, 1),
+                _fetch_candles(qualified_list, now_ts - 3600, now_ts, 60),
+                _fetch_candles(qualified_list, now_ts - 86400, now_ts, 60),
+            )
+
+            # Use local snapshots for 1w and 1mo
+            snapshot_intervals = {
                 "1w": now_pc - timedelta(weeks=1),
+                "1mo": now_pc - timedelta(days=30),
             }
-            multi_snapshots = await db.get_oldest_snapshots_multi_interval(intervals)
+            multi_snapshots = await db.get_oldest_snapshots_multi_interval(snapshot_intervals)
 
             # Step 7: Build qualified market records and write to DB
             now = datetime.utcnow()
@@ -284,8 +353,13 @@ class DashboardDataService:
                 m = after_oi[ticker]
                 s = summaries[ticker]
 
-                # Price changes at multiple intervals
-                def _price_change(label):
+                # Candlestick-based price changes (10m, 1h, 24h)
+                pc_10m = _compute_candlestick_change(candle_10m.get(ticker, []), m.yes_bid)
+                pc_1h = _compute_candlestick_change(candle_1h.get(ticker, []), m.yes_bid)
+                pc_24h = _compute_candlestick_change(candle_24h.get(ticker, []), m.yes_bid)
+
+                # Snapshot-based price changes (1w, 1mo)
+                def _snapshot_change(label):
                     old = multi_snapshots[label].get(ticker)
                     if old and old.yes_bid is not None and m.yes_bid is not None:
                         return float(m.yes_bid - old.yes_bid)
@@ -311,11 +385,11 @@ class DashboardDataService:
                     "total_yes_depth": s.total_yes_depth_dollars,
                     "total_no_depth": s.total_no_depth_dollars,
                     "near_mid_depth": s.near_mid_depth_dollars,
-                    "price_change_10m": _price_change("10m"),
-                    "price_change_30m": _price_change("30m"),
-                    "price_change_1h": _price_change("1h"),
-                    "price_change_24h": _price_change("24h"),
-                    "price_change_1w": _price_change("1w"),
+                    "price_change_10m": pc_10m,
+                    "price_change_1h": pc_1h,
+                    "price_change_24h": pc_24h,
+                    "price_change_1w": _snapshot_change("1w"),
+                    "price_change_1mo": _snapshot_change("1mo"),
                     "updated_at": now,
                 })
 
@@ -385,11 +459,11 @@ class DashboardDataService:
                 "total_yes_depth": r.total_yes_depth,
                 "total_no_depth": r.total_no_depth,
                 "near_mid_depth": r.near_mid_depth,
-                "price_change_10m": r.price_change_10m,
-                "price_change_30m": r.price_change_30m,
-                "price_change_1h": r.price_change_1h,
-                "price_change_24h": r.price_change_24h,
-                "price_change_1w": r.price_change_1w,
+                "price_change_10m": getattr(r, "price_change_10m", None),
+                "price_change_1h": getattr(r, "price_change_1h", None),
+                "price_change_24h": getattr(r, "price_change_24h", None),
+                "price_change_1w": getattr(r, "price_change_1w", None),
+                "price_change_1mo": getattr(r, "price_change_1mo", None),
                 "updated_at": r.updated_at,
             })
 

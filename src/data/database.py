@@ -84,6 +84,7 @@ class QualifiedMarket(Base):
     price_change_1h = Column(Float)
     price_change_24h = Column(Float)
     price_change_1w = Column(Float)
+    price_change_1mo = Column(Float)
 
     updated_at = Column(DateTime, nullable=False, index=True)
 
@@ -172,7 +173,7 @@ class Database:
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
             # Migrate: add new price change columns if missing
-            for col in ("price_change_10m", "price_change_30m", "price_change_1h", "price_change_1w"):
+            for col in ("price_change_10m", "price_change_30m", "price_change_1h", "price_change_1w", "price_change_1mo"):
                 try:
                     await conn.execute(
                         sqlalchemy_text(f"ALTER TABLE qualified_markets ADD COLUMN {col} FLOAT")

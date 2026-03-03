@@ -94,10 +94,10 @@ def render_market_table(df: pd.DataFrame, filters: dict) -> str | None:
     # Price change columns — always add, fill missing with N/A
     price_change_cols = [
         ("price_change_10m", "10m Chg"),
-        ("price_change_30m", "30m Chg"),
         ("price_change_1h", "1h Chg"),
         ("price_change_24h", "24h Chg"),
         ("price_change_1w", "1w Chg"),
+        ("price_change_1mo", "1mo Chg"),
     ]
     filtered = filtered.copy()
     for col, label in price_change_cols:
@@ -126,7 +126,7 @@ def render_market_table(df: pd.DataFrame, filters: dict) -> str | None:
     display_df.columns = [display_cols[c] for c in available_cols]
 
     # Format price change columns: show "N/A" for None/NaN
-    for chg_col in ["10m Chg", "30m Chg", "1h Chg", "24h Chg", "1w Chg"]:
+    for chg_col in ["10m Chg", "1h Chg", "24h Chg", "1w Chg", "1mo Chg"]:
         if chg_col in display_df.columns:
             display_df[chg_col] = display_df[chg_col].apply(
                 lambda x: "N/A" if pd.isna(x) else f"{x:+.0f}"
@@ -153,10 +153,10 @@ def render_market_table(df: pd.DataFrame, filters: dict) -> str | None:
             "Volume": st.column_config.NumberColumn(format="%d"),
             "OI": st.column_config.NumberColumn(format="%d"),
             "10m Chg": st.column_config.TextColumn(width="small"),
-            "30m Chg": st.column_config.TextColumn(width="small"),
             "1h Chg": st.column_config.TextColumn(width="small"),
             "24h Chg": st.column_config.TextColumn(width="small"),
             "1w Chg": st.column_config.TextColumn(width="small"),
+            "1mo Chg": st.column_config.TextColumn(width="small"),
             "Near-Mid $": st.column_config.NumberColumn(format="$%,.0f"),
             "Depth $ (Y)": st.column_config.NumberColumn(format="$%,.0f"),
             "Depth $ (N)": st.column_config.NumberColumn(format="$%,.0f"),

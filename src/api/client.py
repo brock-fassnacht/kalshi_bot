@@ -314,6 +314,45 @@ class KalshiClient:
 
         return all_markets
 
+    async def get_market_candlesticks(
+        self,
+        tickers: list[str],
+        start_ts: int,
+        end_ts: int,
+        period_interval: int = 1,
+    ) -> dict[str, list[dict]]:
+        """
+        Fetch candlestick (OHLC) data for multiple markets in batches.
+
+        Args:
+            tickers: List of market tickers.
+            start_ts: Start time as Unix seconds.
+            end_ts: End time as Unix seconds.
+            period_interval: Candle interval in minutes (1, 60, or 1440).
+
+        Returns:
+            Dict mapping ticker -> list of candlestick dicts.
+        """
+        result: dict[str, list[dict]] = {}
+        # API allows max 100 tickers per request
+        batch_size = 100
+        for i in range(0, len(tickers), batch_size):
+            batch = tickers[i : i + batch_size]
+            params = {
+                "market_tickers": ",".join(batch),
+                "start_ts": start_ts,
+                "end_ts": end_ts,
+                "period_interval": period_interval,
+            }
+            try:
+                data = await self._request("GET", "/markets/candlesticks", params=params)
+                for market_data in data.get("markets", []):
+                    ticker = market_data.get("market_ticker", "")
+                    result[ticker] = market_data.get("candlesticks", [])
+            except Exception as e:
+                logger.warning(f"Candlestick fetch failed for batch starting at {i}: {e}")
+        return result
+
     # -------------------------------------------------------------------------
     # Trading Endpoints
     # -------------------------------------------------------------------------
