@@ -82,7 +82,6 @@ def render_market_table(df: pd.DataFrame, filters: dict) -> str | None:
         "spread": "Spread",
         "volume": "Volume",
         "open_interest": "OI",
-        "last_price": "Last",
     }
 
     # Add orderbook columns if available
@@ -92,16 +91,19 @@ def render_market_table(df: pd.DataFrame, filters: dict) -> str | None:
         display_cols["total_yes_depth"] = "Depth $ (Y)"
         display_cols["total_no_depth"] = "Depth $ (N)"
 
-    # Add price change columns if available
-    for col, label in [
+    # Price change columns — always add, fill missing with N/A
+    price_change_cols = [
         ("price_change_10m", "10m Chg"),
         ("price_change_30m", "30m Chg"),
         ("price_change_1h", "1h Chg"),
         ("price_change_24h", "24h Chg"),
         ("price_change_1w", "1w Chg"),
-    ]:
-        if col in filtered.columns:
-            display_cols[col] = label
+    ]
+    filtered = filtered.copy()
+    for col, label in price_change_cols:
+        if col not in filtered.columns:
+            filtered[col] = None
+        display_cols[col] = label
 
     if "open_time" in filtered.columns:
         display_cols["open_time"] = "Opened"
