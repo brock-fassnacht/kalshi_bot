@@ -36,6 +36,8 @@ class KalshiClient:
         Kalshi requires signing the full path (including /trade-api/v2)
         but WITHOUT query parameters.
         """
+        # Strip query params — auth signs path only
+        path = path.split("?")[0]
         # Ensure path starts with /trade-api/v2
         if not path.startswith("/trade-api/v2"):
             path = "/trade-api/v2" + path
@@ -338,14 +340,19 @@ class KalshiClient:
         batch_size = 100
         for i in range(0, len(tickers), batch_size):
             batch = tickers[i : i + batch_size]
+            # Put market_tickers directly in URL to avoid httpx encoding commas as %2C
+            tickers_str = ",".join(batch)
             params = {
-                "market_tickers": ",".join(batch),
                 "start_ts": start_ts,
                 "end_ts": end_ts,
                 "period_interval": period_interval,
             }
             try:
-                data = await self._request("GET", "/markets/candlesticks", params=params)
+                data = await self._request(
+                    "GET",
+                    f"/markets/candlesticks?market_tickers={tickers_str}",
+                    params=params,
+                )
                 for market_data in data.get("markets", []):
                     ticker = market_data.get("market_ticker", "")
                     result[ticker] = market_data.get("candlesticks", [])
