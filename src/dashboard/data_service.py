@@ -547,6 +547,58 @@ class DashboardDataService:
             loop.close()
         return categories
 
+    def fetch_price_history(self, ticker: str, days: int = 7) -> pd.DataFrame:
+        """Fetch candlestick price history for a single market."""
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(self._async_fetch_price_history(ticker, days))
+        finally:
+            loop.close()
+
+    async def _async_fetch_price_history(self, ticker: str, days: int) -> pd.DataFrame:
+        now_ts = int(datetime.utcnow().timestamp())
+        start_ts = now_ts - (days * 86400)
+        # Use hourly candles for charts
+        interval = 60
+        async with KalshiClient(self.settings) as client:
+            try:
+                result = await client.get_market_candlesticks(
+                    tickers=[ticker],
+                    start_ts=start_ts,
+                    end_ts=now_ts,
+                    period_interval=interval,
+                )
+            except Exception as e:
+                logger.warning(f"Price history fetch failed for {ticker}: {e}")
+                return pd.DataFrame()
+
+        candles = result.get(ticker, [])
+        if not candles:
+            return pd.DataFrame()
+
+        records = []
+        for c in candles:
+            ts = c.get("end_period_ts")
+            yes_bid = c.get("yes_bid", {})
+            price = c.get("price", {})
+            # Use yes_bid close, fall back to price close
+            close = None
+            if yes_bid and isinstance(yes_bid, dict):
+                close = yes_bid.get("close")
+            if close is None and price and isinstance(price, dict):
+                close = price.get("close")
+            if ts and close is not None:
+                records.append({
+                    "time": datetime.utcfromtimestamp(ts),
+                    "price": close,
+                })
+
+        if not records:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(records).sort_values("time")
+        return df
+
     def fetch_orderbook_detail(self, ticker: str) -> tuple[Optional[OrderbookSummary], Optional[dict]]:
         """Fetch fresh orderbook for detail view (single API call)."""
         loop = asyncio.new_event_loop()

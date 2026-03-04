@@ -102,6 +102,20 @@ def main():
 
     if selected_ticker:
         st.divider()
+
+        # Price history chart
+        with st.spinner(f"Loading price chart for {selected_ticker}..."):
+            try:
+                price_df = service.fetch_price_history(selected_ticker, days=7)
+                if not price_df.empty:
+                    st.subheader(f"Price History: {selected_ticker}")
+                    st.line_chart(price_df.set_index("time")["price"], use_container_width=True)
+                else:
+                    st.caption("No price history available for this market.")
+            except Exception as e:
+                st.caption(f"Could not load price chart: {e}")
+
+        # Orderbook detail
         with st.spinner(f"Loading orderbook for {selected_ticker}..."):
             try:
                 summary, raw_ob = service.fetch_orderbook_detail(selected_ticker)
