@@ -4,6 +4,7 @@ import asyncio
 import json
 import threading
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Optional
 
 import pandas as pd
@@ -14,6 +15,29 @@ from src.config import Settings
 from src.data.database import Database
 from src.data.orderbook import compute_orderbook_summary
 from src.models import Market, MarketStatus, OrderbookSummary
+
+
+def _price_to_cents(value) -> Optional[int]:
+    """Normalize Kalshi prices from old cents or new fixed-point dollar strings."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        decimal_value = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if decimal_value <= Decimal("1"):
+        decimal_value *= 100
+    return int(decimal_value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def _extract_candle_price(candle: dict, field: str, point: str) -> Optional[int]:
+    """Read candlestick prices from both legacy and fixed-point response shapes."""
+    section = candle.get(field)
+    if section and isinstance(section, dict):
+        return _price_to_cents(section.get(point, section.get(f"{point}_dollars")))
+    return None
 
 
 def _compute_candlestick_change(
@@ -29,15 +53,10 @@ def _compute_candlestick_change(
     # Sort by end_period_ts ascending and take the oldest candle
     sorted_candles = sorted(candlesticks, key=lambda c: c.get("end_period_ts", 0))
     oldest = sorted_candles[0]
-    # Try yes_bid.open first, fall back to price.open
-    open_price = None
-    yes_bid_data = oldest.get("yes_bid")
-    if yes_bid_data and isinstance(yes_bid_data, dict):
-        open_price = yes_bid_data.get("open")
+    # Try yes_bid.open first, fall back to price.open.
+    open_price = _extract_candle_price(oldest, "yes_bid", "open")
     if open_price is None:
-        price_data = oldest.get("price")
-        if price_data and isinstance(price_data, dict):
-            open_price = price_data.get("open")
+        open_price = _extract_candle_price(oldest, "price", "open")
     if open_price is None:
         return None
     return float(current_yes_bid - open_price)
@@ -179,12 +198,48 @@ class DashboardDataService:
 
             # Step 2: Pre-filter by yes_ask and OI, sort by OI desc, cap at max_orderbook_fetches
             resolved = {MarketStatus.SETTLED, MarketStatus.FINALIZED, MarketStatus.CLOSED}
+            unresolved_markets = [
+                m for m in all_markets.values()
+                if m.status not in resolved
+            ]
+            yes_ask_present = sum(1 for m in unresolved_markets if m.yes_ask is not None)
+            oi_positive = sum(1 for m in unresolved_markets if m.open_interest > 0)
+            oi_threshold = sum(
+                1 for m in unresolved_markets
+                if m.open_interest >= settings.min_oi_prefilter
+            )
+            ask_threshold = sum(
+                1 for m in unresolved_markets
+                if m.yes_ask is not None and m.yes_ask >= settings.min_yes_ask_prefilter
+            )
+            logger.info(
+                "Pre-filter diagnostics: "
+                f"{len(unresolved_markets)} unresolved markets, "
+                f"yes_ask present={yes_ask_present}, "
+                f"open_interest>0={oi_positive}, "
+                f"open_interest>={settings.min_oi_prefilter}={oi_threshold}, "
+                f"yes_ask>={settings.min_yes_ask_prefilter}={ask_threshold}"
+            )
             after_oi_list = [
                 m for m in all_markets.values()
                 if m.status not in resolved
                 and m.open_interest >= settings.min_oi_prefilter
                 and (m.yes_ask is not None and m.yes_ask >= settings.min_yes_ask_prefilter)
             ]
+            if not after_oi_list and unresolved_markets:
+                sample_markets = [
+                    {
+                        "ticker": m.ticker,
+                        "yes_ask": m.yes_ask,
+                        "open_interest": m.open_interest,
+                        "status": m.status.value,
+                    }
+                    for m in unresolved_markets[:5]
+                ]
+                logger.warning(
+                    "Pre-filter eliminated all markets. "
+                    f"Sample parsed rows: {sample_markets}"
+                )
             after_oi_list.sort(key=lambda m: m.open_interest, reverse=True)
             after_oi_list = after_oi_list[:settings.max_orderbook_fetches]
             after_oi = {m.ticker: m for m in after_oi_list}
@@ -579,14 +634,10 @@ class DashboardDataService:
         records = []
         for c in candles:
             ts = c.get("end_period_ts")
-            yes_bid = c.get("yes_bid", {})
-            price = c.get("price", {})
             # Use yes_bid close, fall back to price close
-            close = None
-            if yes_bid and isinstance(yes_bid, dict):
-                close = yes_bid.get("close")
-            if close is None and price and isinstance(price, dict):
-                close = price.get("close")
+            close = _extract_candle_price(c, "yes_bid", "close")
+            if close is None:
+                close = _extract_candle_price(c, "price", "close")
             if ts and close is not None:
                 records.append({
                     "time": datetime.utcfromtimestamp(ts),

@@ -1,11 +1,9 @@
 """Orderbook detail view - expandable depth chart for a selected market."""
 
-import json
-
 import pandas as pd
 import streamlit as st
 
-from src.data.orderbook import kalshi_orderbook_to_df
+from src.data.orderbook import normalize_orderbook
 from src.models import OrderbookSummary
 
 
@@ -29,9 +27,9 @@ def render_orderbook_detail(summary: OrderbookSummary, raw_orderbook: dict):
         st.metric("Best NO", best)
 
     # Depth chart
-    ob_data = raw_orderbook.get("orderbook", raw_orderbook) or {}
-    yes_levels = ob_data.get("yes") or []
-    no_levels = ob_data.get("no") or []
+    ob_data = normalize_orderbook(raw_orderbook)
+    yes_levels = ob_data["yes"]
+    no_levels = ob_data["no"]
 
     if yes_levels or no_levels:
         chart_col1, chart_col2 = st.columns(2)
@@ -40,8 +38,8 @@ def render_orderbook_detail(summary: OrderbookSummary, raw_orderbook: dict):
             if yes_levels:
                 st.caption("YES Side (buy YES)")
                 yes_df = pd.DataFrame(yes_levels, columns=["Price (c)", "Size"])
-                yes_df["Dollar Value"] = (yes_df["Price (c)"] * yes_df["Size"]) / 100
-                st.bar_chart(yes_df.set_index("Price (c)")["Dollar Value"])
+                yes_df["Depth $"] = yes_df["Size"]
+                st.bar_chart(yes_df.set_index("Price (c)")["Depth $"])
                 st.dataframe(yes_df, hide_index=True, use_container_width=True)
             else:
                 st.caption("No YES orders")
@@ -50,8 +48,8 @@ def render_orderbook_detail(summary: OrderbookSummary, raw_orderbook: dict):
             if no_levels:
                 st.caption("NO Side (buy NO)")
                 no_df = pd.DataFrame(no_levels, columns=["Price (c)", "Size"])
-                no_df["Dollar Value"] = (no_df["Price (c)"] * no_df["Size"]) / 100
-                st.bar_chart(no_df.set_index("Price (c)")["Dollar Value"])
+                no_df["Depth $"] = no_df["Size"]
+                st.bar_chart(no_df.set_index("Price (c)")["Depth $"])
                 st.dataframe(no_df, hide_index=True, use_container_width=True)
             else:
                 st.caption("No NO orders")

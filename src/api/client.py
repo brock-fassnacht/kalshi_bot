@@ -2,8 +2,8 @@
 
 import asyncio
 from datetime import datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Optional
-from urllib.parse import urlparse
 
 import httpx
 from loguru import logger
@@ -28,6 +28,41 @@ class KalshiClient:
     async def __aexit__(self, *args) -> None:
         if self._client:
             await self._client.aclose()
+
+    @staticmethod
+    def _to_cents(value: Any) -> Optional[int]:
+        """Convert Kalshi price fields to integer cents."""
+        if value is None or value == "":
+            return None
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        try:
+            decimal_value = Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError):
+            return None
+
+        # Fixed-point API returns prices in dollars (e.g. "0.5600").
+        if decimal_value <= Decimal("1"):
+            decimal_value *= 100
+
+        return int(decimal_value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+    @staticmethod
+    def _to_contracts(value: Any) -> int:
+        """Convert Kalshi quantity/open-interest fields to whole contracts."""
+        if value is None or value == "":
+            return 0
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        try:
+            decimal_value = Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError):
+            return 0
+        return int(decimal_value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
     def _get_auth_path(self, path: str) -> str:
         """
@@ -441,23 +476,30 @@ class KalshiClient:
             return None
 
         try:
+            status_value = str(data.get("status", "open")).lower()
+            try:
+                status = MarketStatus(status_value)
+            except ValueError:
+                status = MarketStatus.OPEN
             return Market(
                 ticker=data["ticker"],
                 event_ticker=data.get("event_ticker", ""),
                 title=data.get("title", ""),
                 subtitle=data.get("subtitle"),
-                status=MarketStatus(data.get("status", "open")),
-                yes_bid=data.get("yes_bid"),
-                yes_ask=data.get("yes_ask"),
-                no_bid=data.get("no_bid"),
-                no_ask=data.get("no_ask"),
-                last_price=data.get("last_price"),
-                volume=data.get("volume", 0),
-                open_interest=data.get("open_interest", 0),
+                status=status,
+                yes_bid=self._to_cents(data.get("yes_bid", data.get("yes_bid_dollars"))),
+                yes_ask=self._to_cents(data.get("yes_ask", data.get("yes_ask_dollars"))),
+                no_bid=self._to_cents(data.get("no_bid", data.get("no_bid_dollars"))),
+                no_ask=self._to_cents(data.get("no_ask", data.get("no_ask_dollars"))),
+                last_price=self._to_cents(data.get("last_price", data.get("last_price_dollars"))),
+                volume=self._to_contracts(data.get("volume", data.get("volume_fp"))),
+                open_interest=self._to_contracts(data.get("open_interest", data.get("open_interest_fp"))),
                 category=data.get("category"),
                 open_time=self._parse_datetime(data.get("open_time")),
                 close_time=self._parse_datetime(data.get("close_time")),
-                expiration_time=self._parse_datetime(data.get("expiration_time")),
+                expiration_time=self._parse_datetime(
+                    data.get("expiration_time", data.get("expected_expiration_time"))
+                ),
             )
         except Exception as e:
             logger.warning(f"Failed to parse market {data.get('ticker')}: {e}")

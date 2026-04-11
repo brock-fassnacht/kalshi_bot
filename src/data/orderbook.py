@@ -1,10 +1,71 @@
 """Orderbook processing for Kalshi markets."""
 
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Optional
 
 import pandas as pd
 
 from ..models import OrderbookSummary
+
+
+def _to_cents(value) -> Optional[int]:
+    """Convert old int-cents and new fixed-point dollar strings to cents."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        decimal_value = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if decimal_value <= Decimal("1"):
+        decimal_value *= 100
+    return int(decimal_value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def _to_quantity(value) -> float:
+    """Convert contract-size fields to a float quantity."""
+    if value is None or value == "":
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(Decimal(str(value)))
+    except (InvalidOperation, TypeError, ValueError):
+        return 0.0
+
+
+def normalize_orderbook(orderbook: dict) -> dict[str, list[list[float]]]:
+    """Normalize old and new Kalshi orderbook formats to cent/size pairs."""
+    if not orderbook:
+        return {"yes": [], "no": []}
+
+    if "orderbook" in orderbook and isinstance(orderbook["orderbook"], dict):
+        ob_data = orderbook["orderbook"] or {}
+        yes_levels = ob_data.get("yes") or []
+        no_levels = ob_data.get("no") or []
+        return {"yes": yes_levels, "no": no_levels}
+
+    if "orderbook_fp" in orderbook and isinstance(orderbook["orderbook_fp"], dict):
+        ob_data = orderbook["orderbook_fp"] or {}
+        yes_key = "yes_dollars" if "yes_dollars" in ob_data else "yes_dollars_fp"
+        no_key = "no_dollars" if "no_dollars" in ob_data else "no_dollars_fp"
+        yes_levels = [
+            [_to_cents(price), _to_quantity(size)]
+            for price, size in (ob_data.get(yes_key) or [])
+            if _to_cents(price) is not None
+        ]
+        no_levels = [
+            [_to_cents(price), _to_quantity(size)]
+            for price, size in (ob_data.get(no_key) or [])
+            if _to_cents(price) is not None
+        ]
+        return {"yes": yes_levels, "no": no_levels}
+
+    return {
+        "yes": orderbook.get("yes") or [],
+        "no": orderbook.get("no") or [],
+    }
 
 
 def kalshi_orderbook_to_df(orderbook: dict, ticker: str) -> pd.DataFrame:
@@ -13,10 +74,9 @@ def kalshi_orderbook_to_df(orderbook: dict, ticker: str) -> pd.DataFrame:
 
     Kalshi format: {"orderbook": {"yes": [[price, size], ...], "no": [[price, size], ...]}}
     """
-    ob_data = orderbook.get("orderbook", orderbook) or {}
-
-    yes_levels = ob_data.get("yes") or []
-    no_levels = ob_data.get("no") or []
+    ob_data = normalize_orderbook(orderbook)
+    yes_levels = ob_data["yes"]
+    no_levels = ob_data["no"]
 
     max_levels = max(len(yes_levels), len(no_levels), 1)
 
@@ -46,28 +106,31 @@ def compute_orderbook_summary(
     """
     Compute orderbook summary with total depth, near-touch, and near-mid liquidity.
 
-    Prices are in cents. Depth in dollars = sum(price * size) / 100.
+    Prices are in cents. Depth in dollars = sum(contract size).
     Near-touch = levels within `near_touch_cents` of best price.
     Near-mid = levels within `near_mid_range_cents` of the midpoint between bid and ask.
     """
-    ob_data = orderbook.get("orderbook", orderbook) or {}
-
-    yes_levels = ob_data.get("yes") or []
-    no_levels = ob_data.get("no") or []
+    ob_data = normalize_orderbook(orderbook)
+    yes_levels = ob_data["yes"]
+    no_levels = ob_data["no"]
 
     # Compute midpoint from market bid/ask if provided, else from orderbook best prices
     mid = None
     if yes_bid is not None and yes_ask is not None:
         mid = (yes_bid + yes_ask) / 2.0
+    elif yes_levels and no_levels:
+        best_yes = max(level[0] for level in yes_levels)
+        best_no = max(level[0] for level in no_levels)
+        implied_yes_ask = 100 - best_no
+        mid = (best_yes + implied_yes_ask) / 2.0
     elif yes_levels:
-        # Orderbook YES shows ask prices (prices to buy YES)
-        mid = yes_levels[0][0]
+        mid = max(level[0] for level in yes_levels)
 
     # YES side
     total_yes = 0.0
     near_yes = 0.0
     near_mid_yes = 0.0
-    best_yes = yes_levels[0][0] if yes_levels else None
+    best_yes = max((level[0] for level in yes_levels), default=None)
 
     for price, size in yes_levels:
         dollar_value = size  # Each contract is $1, size = number of contracts at this price
@@ -81,7 +144,7 @@ def compute_orderbook_summary(
     total_no = 0.0
     near_no = 0.0
     near_mid_no = 0.0
-    best_no = no_levels[0][0] if no_levels else None
+    best_no = max((level[0] for level in no_levels), default=None)
 
     # NO mid is complementary: if YES mid is 60, NO mid is 40
     no_mid = (100 - mid) if mid is not None else None
@@ -112,8 +175,8 @@ def compute_orderbook_summary(
 
 def get_best_prices(df: pd.DataFrame) -> dict:
     """Extract best bid/ask prices from an order book DataFrame."""
-    best_bid = df["yes_price"].dropna().min() if "yes_price" in df.columns else None
-    best_ask = df["no_price"].dropna().min() if "no_price" in df.columns else None
+    best_bid = df["yes_price"].dropna().max() if "yes_price" in df.columns else None
+    best_ask = df["no_price"].dropna().max() if "no_price" in df.columns else None
 
     mid_price = None
     spread = None
